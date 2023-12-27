@@ -8,6 +8,7 @@ date: '2023-05-31'
 knitr::opts_chunk$set(echo = TRUE)
 library(parallel)
 mcore<-12
+mcore<-1
 # mcore<-1# for Window PC
 #Load libraries
 # Load the WGCNA package
@@ -19,11 +20,15 @@ library(magrittr)
 require("ggrepel")
 library(ggpmisc)
 library(ggpubr)
+
 # The following setting is important, do not omit.
 options(stringsAsFactors = FALSE);
-path_output<-"/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Results"
+
+#path_output<-"/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Results"
+path_output <- "W:/#oucru-tb/PTB_Project/Triet_Results"
+
 ###------Import clinical data ------###
-l<-load("/home/ubuntu/tb_volume/PTB_transcriptomics_project/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
+l<-load("C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
 clinical <- vst_data %>% 
                         dplyr::select("Patient_ID","Age","SEX","BMI","Timika_score_CXR","Diabetes","Cavity_CXR","Lung_proportion_CXR","CT_mean","Timepoint","GeneXpert","HIV","trial_number","LIMS_ID") %>% 
                         dplyr::rename("Sex"="SEX","Treatment_sensitive"="trial_number")
@@ -47,17 +52,19 @@ clinical <- vst_data %>%
 
 ```
 
-
 ```{r include=FALSE}
 # Import raw RNA_seq data, do the do the stabilizing variance transformation, and select the top 10000 with high variances genes
-path_rawRNA_seqdata<-"/home/ubuntu/tb_volume/Hai_Cpath_Analysis/Rstudio_sever/github_repos"
+#path_rawRNA_seqdata<-"/home/ubuntu/tb_volume/Hai_Cpath_Analysis/Rstudio_sever/github_repos"
+
 ## load input data. This is the pooled data of all RNA_seq data
+
+#lnames <- load(file=paste(path_rawRNA_seqdata,"RData/Data_RNAseq_RUN1andRUN2_15Feb2023.RData",sep="/"))
 lnames <- load(file=paste(path_rawRNA_seqdata,"RData/Data_RNAseq_RUN1andRUN2_15Feb2023.RData",sep="/"))
+
 ## load clinical data from the meta data
 All_sample_RNAseq <- readxl::read_excel(paste(path_rawRNA_seqdata,"General_analysis/Infor/All_sample_RNAseq.xlsx",sep="/"),sheet = "Run1and2") %>% as.data.frame()
 rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
 ```
-
 
 ```{r include=FALSE}
 ## check clinical data and count data 
@@ -161,7 +168,6 @@ rownames(RNA_data)<-rownames(clinical_RNA)<-clinical_RNA$LIMS_ID
 save(RNA_data,clinical,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/Most_variance_RNA_genes.Rdata")
 ```
 
-
 # Patient characteristics of discovery and validation cohort
 
 ```{r echo=FALSE}
@@ -202,8 +208,6 @@ table <- tbl_summary(
 table
 ```
 
-
-
 # Data input,cleaning and pre-processing for combined cohorts
 
 ```{r eval=FALSE, include=FALSE}
@@ -243,7 +247,6 @@ abline(h = 120, col = "red");
 dev.off()
 ```
 
-
 ```{r include=FALSE}
 # Determine cluster under the line
 clust = cutreeStatic(sampleTree, cutHeight = 120, minSize = 10)
@@ -258,7 +261,6 @@ nSamples = nrow(datExpr)
 ## It appears there was no outlier (see Fig. 1).  
 ## We  remove it and use a branch cut at that height
 ```
-
 
 # Perform the WGCNA analysis on discovery cohort (independent set 1)
 
@@ -285,7 +287,6 @@ names(multiExpr)<-shortLabels
 exprSize = checkSets(multiExpr)
 # exprSize = checkSets(multiClinical_Expr)
 ```
-
 
 ### Process trait phenotype
 
@@ -345,8 +346,6 @@ for (set in 1:nSets){
 ```{r}
 save(multiExpr, traitData,nGenes,nSamples,exprSize,setLabels,shortLabels, file =paste0(path_output,"/PTB-01-dataInput.RData"))
 ```
-
-
 
 ## Network construction and module detection on discovery cohort
 
@@ -421,9 +420,7 @@ net = blockwiseModules(multiExpr[[1]]$data, power = power,
 save(net,file=paste0(path_output,"/network_construction_PTB.RData"))
 ```
 
-
 #### Module detection on the discovery set
-
 
 ```{r include=FALSE}
 load(file=paste0(path_output,"/network_construction_PTB.RData"))
@@ -442,10 +439,7 @@ save(net,MEs_discovery, moduleLabels, moduleColors, geneTree,
 
 Of note remove all the isolated knots of simply it with low connection knots. I dont wkno how to best present it yet.
 
-
-
 ### Association between modules with patient's characteristics and clinical phenotypes on discovery cohort
-
 
 ```{r include=FALSE}
 lnames = load(file = paste0(path_output,"/PTB-01-dataInput.RData"));
@@ -457,7 +451,6 @@ lnames = load(file = paste0(path_output,"/PTB-02-networkConstruction-auto.RData"
 lnames
 net$MEsOK; MEs_discovery; moduleColors; moduleLabels
 ```
-
 
 ### Recalculate module eigene (ME - PC1)
 
@@ -507,9 +500,7 @@ dev.off()
 }
 ```
 
-
-
-* Of note, we observed that except for the brown modules we see a little bit evidence of non-linearity other than that we observed a linear trend.  For the sake of generality, we will use the linear trend for all the subsequent analysis but for the selection for the best predictors for CT value we allow to select it based on the non-linear trend.
+-   Of note, we observed that except for the brown modules we see a little bit evidence of non-linearity other than that we observed a linear trend. For the sake of generality, we will use the linear trend for all the subsequent analysis but for the selection for the best predictors for CT value we allow to select it based on the non-linear trend.
 
 ```{r echo=FALSE}
 # We color code each association by the correlation value
@@ -554,7 +545,6 @@ moduleTraitPvalue.adj[[set]]<-apply(moduleTraitPvalue[[set]],2,function(x){p.adj
 save(MEs,moduleTraitPvalue,moduleTraitPvalue.adj,moduleTraitCor,moduleTraitCor.scaled,file=paste0(path_output,"/Module_discovery.Rdata"))
 ```
 
-
 ```{r echo=FALSE}
 t <- as.vector(table(moduleColors))
 png(file = paste0(path_output,"/ModuleGenenumber.png"), wi = 9.5, 
@@ -563,7 +553,6 @@ barplot(t, names.arg = names(table(moduleColors)), col = names(table(moduleColor
         ylab = "number of genes", main = "Genes in Module")
 dev.off()
 ```
-
 
 ## Calculation of module preservation in validation cohort
 
@@ -596,7 +585,6 @@ if (!file.exists(paste0(path_output,"/PTB-modulePreservation.RData"))) {
   save(mp, file = paste0(path_output,"/PTB-modulePreservation.RData"))
 } else load(file = paste0(path_output,"/PTB-modulePreservation.RData"))
 ```
-
 
 ### Visualize of module preservation plot
 
@@ -660,8 +648,6 @@ for (p in 1:2)
 dev.off()
 ```
 
-
-
 ## Plot P value of modules vs complex clinical traits in discovery and validation
 
 ```{r}
@@ -692,13 +678,12 @@ ggplot(data=dat_tmp,aes(x=`p.value_Discovery`,y=`p.value_Validation`,label = mod
         legend.key = element_rect(colour = NA),
         strip.text=element_text(face = "bold",size=12))+ggtitle(paste0("Association between Modules and ",traits[i])) +  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))+ geom_text_repel()+geom_vline(xintercept=log2(0.1),linetype="dashed",col="red")+geom_hline(yintercept = log2(0.05),linetype="dashed",col="red")
 dev.off()
-
 }
 
 
 ```
 
-##### Module-trait association analysis for each cohort 
+##### Module-trait association analysis for each cohort
 
 ```{r echo=FALSE}
 ## Module-trait association analysis
@@ -732,9 +717,7 @@ dev.off()
 }
 ```
 
-
-
-###  Gene relationship to clinical trait-CT Xpert value and important modules: Gene Significance and Module Membership on pooled data
+### Gene relationship to clinical trait-CT Xpert value and important modules: Gene Significance and Module Membership on pooled data
 
 ```{r}
 #=====================================================================================
@@ -785,9 +768,9 @@ save(geneModuleMembership,geneTraitAssociation,file=paste0(path_output,"/Gene Si
 
 ```
 
-
 ### Intramodular analysis: identifying genes with high GA and MM with respect to bacterial burden
-**Of note, In the following, we use the term upregulate or downregulate we mean the trend bwteen eignegene of each module vs the phenotyes (clinical trait) **
+
+**Of note, In the following, we use the term upregulate or downregulate we mean the trend bwteen eignegene of each module vs the phenotyes (clinical trait)**
 
 ##### Up-regulated modules with respect to bacterial burden.
 
@@ -811,7 +794,6 @@ moduleTraitCor_wide<-cbind(moduleTraitCor_1,moduleTraitCor_2)
 selected_modules<-moduleTraitPvalue_wide%>% filter(log2_CT_discovery<0.1&log2_CT_validation<0.1) %>% rownames()
 upregulated_modules<-selected_modules
 ```
-
 
 ```{r include=FALSE}
 load(file=paste0(path_output,"/Gene Significance and Module Membership_log2_CT.Rdata"))
@@ -909,9 +891,9 @@ write.csv(output_hubs, file = paste0(path_output,"/Modules-Hubgenes_CT_value.csv
           row.names = FALSE, quote = FALSE)
 ```
 
-
 #### Intramodular analysis: identifying genes with high GA and MM with respect to Chest_X_ray_cavity
-**Of note, In the following, we use the term upregulate or downregulate we mean the trend bwteen eignegene of each module vs the phenotyes (clinical trait) **
+
+**Of note, In the following, we use the term upregulate or downregulate we mean the trend bwteen eignegene of each module vs the phenotyes (clinical trait)**
 
 ##### Up-regulated modules with respect to Chest_X_ray_cavity.
 
@@ -923,7 +905,6 @@ downregulated_modules<-as.data.frame(moduleTraitCor_wide[selected_modules,]) %>%
 upregulated_modules<-as.data.frame(moduleTraitCor_wide[selected_modules,]) %>% filter(Cavity_CXR_discovery >0 & Cavity_CXR_validation>0)%>% rownames()
 
 ```
-
 
 ```{r include=FALSE}
 library(ggpmisc)
@@ -1021,12 +1002,9 @@ write.csv(output_hubs, file = paste0(path_output,"/Modules-Hubgenes_Cavity_CXR.c
           row.names = FALSE, quote = FALSE)
 ```
 
-
-
-
-
 #### Intramodular analysis: identifying genes with high GA and MM with respect to lung dammage proportion
-**Of note, In the following, we use the term upregulate or downregulate we mean the trend bwteen eignegene of each module vs the phenotyes (clinical trait) **
+
+**Of note, In the following, we use the term upregulate or downregulate we mean the trend bwteen eignegene of each module vs the phenotyes (clinical trait)**
 
 ##### Up-regulated modules with respect to lung dammage proportion.
 
@@ -1037,7 +1015,6 @@ downregulated_modules<-as.data.frame(moduleTraitCor_wide[selected_modules,]) %>%
 
 upregulated_modules <-as.data.frame(moduleTraitCor_wide[selected_modules,]) %>% filter(Lung_proportion_CXR_discovery >0 & Lung_proportion_CXR_validation>0)%>% rownames()
 ```
-
 
 ```{r include=FALSE}
 library(ggpmisc)
@@ -1135,11 +1112,12 @@ write.csv(output_hubs, file = paste0(path_output,"/Modules-Hubgenes_Lung_proport
           row.names = FALSE, quote = FALSE)
 ```
 
-
-# Pathway analysis - network analysis - hubgene 
+# Pathway analysis - network analysis - hubgene
 
 ## Active-subnetwork-oriented Enrichment Analysis for modules associated with bacterial burden (log2_CT)
+
 ### Upregulation module
+
 #### Module brown
 
 ```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
@@ -1259,9 +1237,7 @@ dev.off()
 
 ```
 
-
 ##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module brown
-
 
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
 # Define two function to gete two database KEGG and GO
@@ -1411,14 +1387,10 @@ save(dat_2,file="pathway_PTB.Rdata")
 
 ```
 
-
-
-
-
-
-
 ## Active-subnetwork-oriented Enrichment Analysis for modules associated with Chest X-ray cavity (Cavity_CXR)
+
 ### Upregulation module (checked)
+
 #### Module brown
 
 ```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
@@ -1517,9 +1489,7 @@ dev.off()
 
 ```
 
-
 ##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module brown
-
 
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
 
@@ -1647,10 +1617,8 @@ png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_vs_gene_set
 dev.off()
 ```
 
-
-
-
 ### Dowregulation module
+
 #### Module magenta (checked)
 
 ```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
@@ -1725,9 +1693,7 @@ dev.off()
 
 ```
 
-
 ##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module brown
-
 
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
 
@@ -1816,18 +1782,6 @@ dev.off()
 
 ```
 
-
-
-
-
-
-
-
-
-
-
-
-
 #### Module green (checked)
 
 ```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
@@ -1889,6 +1843,7 @@ load(file=path_output_module_KEGG)
 ```
 
 ## Active-subnetwork-oriented Enrichment Analysis for modules associated with Chest X-ray lung proportion damage
+
 ### Upregulation module
 
 #### Module pink (checked)
@@ -1977,9 +1932,7 @@ dev.off()
 
 ```
 
-
 ##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module pink
-
 
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
 
@@ -2056,11 +2009,8 @@ dev.off()
 
 ```
 
-
-
-
-
 ### Dowregulation module
+
 #### Module red (checked)
 
 ```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
@@ -2159,9 +2109,7 @@ dev.off()
 
 ```
 
-
 ##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module brown
-
 
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
 
@@ -2221,11 +2169,6 @@ png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_vs_gene_set
 cowplot::plot_grid(plotlist = p, nrow = 3)+ggtitle(paste("GSEA score vs. ",phenotype))+ theme(plot.title = element_text(hjust = 0.5))
 dev.off()
 ```
-
-
-
-
-
 
 #### Module green (changing)
 
@@ -2327,9 +2270,7 @@ dev.off()
 
 ```
 
-
 ##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module brown
-
 
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
 
@@ -2397,19 +2338,10 @@ cowplot::plot_grid(plotlist = p, nrow = 3)+ggtitle(paste("GSEA score vs. ",pheno
 dev.off()
 ```
 
-
 # Network analysis
 
- In this analysis, we aim to find the connection between CNIH4 with the gene network of T-cell receptor signaling pathways.
-- We select all the genes forms this network, and perform the Random-forest network. This is a ML method.   
-
-
+In this analysis, we aim to find the connection between CNIH4 with the gene network of T-cell receptor signaling pathways. - We select all the genes forms this network, and perform the Random-forest network. This is a ML method.
 
 # Mediation analysis
 
-Here we investigate the role of CNIH4 --> bacterial burden to TB sevarity (Chest Xray cavity and lung dammage)
-
-
-
-
-
+Here we investigate the role of CNIH4 --\> bacterial burden to TB sevarity (Chest Xray cavity and lung dammage)

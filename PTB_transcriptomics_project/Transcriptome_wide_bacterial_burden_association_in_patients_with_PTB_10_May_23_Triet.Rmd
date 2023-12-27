@@ -6,8 +6,11 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
+#knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE)
 library(parallel)
 mcore<-1
 # mcore<-1# for Window PC
@@ -39,9 +42,10 @@ library(CEMiTool)
 # load("/home/ubuntu/tb_volume/PTB_transcriptomics_project/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
 # clinical <-vst_data%>% select("Patient_ID","Age","SEX","BMI","Timika_score_CXR","Diabetes","Cavity_CXR","Lung_proportion_CXR","CT_mean","Timepoint","GeneXpert","HIV","trial_number","LIMS_ID") %>% rename("SEX"="Sex","trial_number"="Treatment_sensitive")
 
-path_output<-"W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Results"
+path_output<- "W:/#oucru-tb/PTB_Project/Triet_Results"
+path_input <- "C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/"
 ###------Import clinical data------###
-load("W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
+load("C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
 
 clinical <-vst_data%>% select("Patient_ID","Age","SEX","BMI","Timika_score_CXR","Diabetes","Cavity_CXR","Lung_proportion_CXR","CT_mean","Timepoint","GeneXpert","HIV","trial_number","LIMS_ID") %>% rename("SEX"="Sex","trial_number"="Treatment_sensitive")
 ```
@@ -52,11 +56,11 @@ clinical <-vst_data%>% select("Patient_ID","Age","SEX","BMI","Timika_score_CXR",
 ## load input data. This is the pooled data of all RNA_seq data
 #lnames <- load(file=paste(path_rawRNA_seqdata,"RData/Data_RNAseq_RUN1andRUN2_15Feb2023.RData",sep="/"))
 #CEMiTool
-lnames <- load(file="W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData")
+lnames <- load(file=paste0(path_input,"Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
 
 ## load clinical data from the meta data
 #All_sample_RNAseq <- readxl::read_excel(paste(path_rawRNA_seqdata,"General_analysis/Infor/All_sample_RNAseq.xlsx",sep="/"),sheet = "Run1and2") %>% as.data.frame()
-All_sample_RNAseq <- readxl::read_excel("W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Raw_data/All_sample_RNAseq.xlsx",sheet = "Run1and2") %>% as.data.frame()
+All_sample_RNAseq <- readxl::read_excel(paste0(path_input,"Raw_data/All_sample_RNAseq.xlsx"),sheet = "Run1and2") %>% as.data.frame()
 
 rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
 
@@ -163,7 +167,7 @@ rownames(RNA_data)<-rownames(clinical_RNA)<-clinical_RNA$LIMS_ID
 # Patient characteristics of discovery and validation cohort
 
 ```{r echo=FALSE}
-load(file="W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Data/Most_variance_RNA_genes.Rdata")
+load(file=paste0(path_input,"Data/Most_variance_RNA_genes.Rdata"))
 # Here we only combine the 295 patients who have good RNA_seq quality
 clinical_RNA<-merge(RNA_data,clinical,by="LIMS_ID")
 
@@ -257,7 +261,7 @@ R_sq<-data.frame(signal_genes=signal_genes,Rsq_adj=Rsq_adj) %>% arrange(desc(Rsq
 ### Step 1: Ranking signal genes with criteria (150-1500) and selecting top-hit genes on set_1 set.
 
 ```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Data/signal_genes_discovery.Rdata")
+load(file=paste0(path_input,"Data/signal_genes_discovery.Rdata"))
 set.seed(123)
 B <- 2000
 m<-ceiling(floor(splitting_set_size * nrow(clinical_RNA))*2/3)
@@ -295,7 +299,7 @@ for(k in 1:B) {
 #### Re-sampling ranking based on the estimate R_sq of genes on Gene-Xpert Ct value on discovery set.
 
 ```{r fig.height=10, fig.width=10, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Data/correlation_set_1_set_2023_07_16.Rdata")
+load(file=paste0(path_input,"Data/correlation_set_1_set_2023_07_16.Rdata"))
 
 gene_names<-colnames(branks)
 branks<-as.matrix(branks)
@@ -362,7 +366,7 @@ R2_sum_set_1_set<-R2_sum %<>%  arrange((`rank-50%`))
 ### Step 2: Ranking signal genes with criteria (150-1500) and selecting top-hit genes on set_2 set.
 
 ```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Data/signal_genes_validation.Rdata")
+load(file=paste0(path_input,"Data/signal_genes_validation.Rdata"))
 set.seed(123)
 B <- 2000
 m<-ceiling(floor(splitting_set_size * nrow(clinical_RNA))*2/3)
@@ -379,7 +383,7 @@ R2_compute<-function(data=data,gene_names=gene_names,variables_names=variables_n
   f0<-mgcv::gam(log2_CT~1,data,family="gaussian",method="REML")
   l<-mclapply(1:length(gene_names),function(i){
     summary(update(f0,formula(paste0("~ s(",gene_names[i],")"))))$r.sq
-    },mc.cores = 12)
+    },mc.cores = mcore)
   return(unlist(l))
 }
 
@@ -400,7 +404,7 @@ for(k in 1:B) {
 #### Re-sampling ranking based on the estimate HR of genes on two-month mortality on validation set.
 
 ```{r fig.height=10, fig.width=10, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Data/correlation_set_2_set_2023_07_16.Rdata")
+load(file=paste0(path_input,"Data/correlation_set_2_set_2023_07_16.Rdata"))
 gene_names<-colnames(branks)
 branks<-as.matrix(branks)
 branks_sum<-matrixStats::colQuantiles(branks,probs = c(0.025,0.975,0.5)) %>% as.data.frame()
@@ -466,8 +470,8 @@ R2_sum_set_2_set<-R2_sum %<>%  arrange((`rank-50%`))
 ### Combine signals from the two independent sets
 
 ```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Data/R2_sum_set_1.Rdata")
-load(file="W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Data/R2_sum_set_2.Rdata")
+load(file=paste0(path_input,"Data/R2_sum_set_1.Rdata"))
+load(file=paste0(path_input,"Data/R2_sum_set_2.Rdata"))
 
 R2_sum_set_1_set %<>% mutate(select=ifelse((`rank-2.5%`<=50 & `rank-97.5%`<=500 & `R2-50%`>0.04),"yes","no")) 
 R2_sum_set_2_set %<>% mutate(select=ifelse((`rank-2.5%`<=50 & `rank-97.5%`<=500 & `R2-50%`>0.04),"yes","no")) 
@@ -490,7 +494,7 @@ R2_top_hit<-rbind(R2_sum_set_1_set_tophit,R2_sum_set_2_set_tophit) %>% mutate(va
 #### Forest-plots of top-hit genes
 
 ```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="W:/#oucru-tb/PTB_Project/PTB_transcriptomics_project/Data/R2_top_hit.Rdata")
+load(file=paste0(path_input,"Data/R2_top_hit.Rdata"))
 ```
 
 ```{r echo=FALSE, fig.height=30, fig.width=30, message=FALSE, warning=FALSE, paged.print=FALSE}
@@ -554,9 +558,16 @@ cowplot::plot_grid(p1,p2, nrow = 1)
 # dev.off()
 ```
 
+```{r}
+
+```
+
 ```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
 dat_top_hit_set_1<-clinical_RNA[index_set_1,c(common_list,"log2_CT")] %>% mutate(Set="Discovery set") 
 dat_top_hit_set_2<-clinical_RNA[index_set_2,c(common_list,"log2_CT")] %>% mutate(Set="Validation set")
+
+dat_top_hit_set_3<-Fludigm_PTB[,c(common_list,"log2_CT")] %>% mutate(Set="Validation set")
+
 dat_top_hit<-rbind(dat_top_hit_set_1,dat_top_hit_set_2)
 dat_top_hit$Set<-as.factor(dat_top_hit$Set)
 ```
@@ -628,7 +639,6 @@ dat_set_1<-data.frame(gene_names=signal_genes,
                 df_set_1=df,p.val_set_1=p.val,
                 Set="Discovery set")
 
-
 p.val<-c()
 f0<-mgcv::gam(log2_CT~1,data=clinical_RNA[index_set_2,],family="gaussian",method="REML")
 Rsq_adj<-df<-c()
@@ -647,7 +657,7 @@ dat_set_2<-data.frame(gene_names=signal_genes,
                 Set="Validation set") 
 dat<-cbind(dat_set_1,dat_set_2)
 dat$df_parsimony_model<-ceiling(pmin(dat$df_set_1,dat$df_set_2))
-save(dat,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/validated_results.Rdata")
+# save(dat,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/validated_results.Rdata")
 #The association is very weak to validate by FDR.
 ```
 
@@ -758,12 +768,12 @@ plot(mod,cex.lab=3, cex.axis=3, cex.main=3, cex.sub=3,font=2)
 ## assume unimodality:
 #stabsel_parameters(mod, q=2, PFER = 1,sampling.type = "SS",B=100)
 
-(stab.boot <- stabs::stabsel(mod, q =2, PFER = 1, mc.cores = 12,sampling.type = "SS",assumption = "r-concave",B=200))
-save(stab.boot,file=paste0(path_output,"/variable_selection.Rdata"))
+(stab.boot <- stabs::stabsel(mod, q =2, PFER = 1, mc.cores = mcore,sampling.type = "SS",assumption = "r-concave",B=200))
+# save(stab.boot,file=paste0(path_output,"/variable_selection.Rdata"))
 ```
 
 ```{r}
-load(file=paste0(path_output,"/variable_selection.Rdata"))
+load(file=paste0(path_input,"Data/variable_selection.Rdata"))
 library("stringr")
 dat_plot<-data.frame(variable=names(stab.boot$max),`Selected probability`=stab.boot$max) 
 dat_plot %<>% mutate(variable=c("CNIH4","DPRXP2","TLR5","SLC26A8","AC244453.2")) 
@@ -862,5 +872,131 @@ dev.off()
 ### Validation PCR method (Triet)
 
 ```{r}
+load('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/Fludigm_CNIH4_PTB.RData')
 
+All_Fluidigm_data <- readxl::read_excel(paste0(path_input,"Raw_data/Data Fluidigm_All.xlsx"),sheet = "All") %>% as.data.frame()
+tmp<-filter(All_Fluidigm_data,(Study%in% c('28TB','29TB'))&(Sample_Type=='Blood')&(Timepoint=='D0')&(Ct_Call=='Pass')&(EvaGreen_Name%in%common_list))
+table(tmp$EvaGreen_Name)
+
+```
+
+### Other
+
+```{r}
+impute_df <- read.csv('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt',sep='\t')
+impute_df
+# rownames(impute_df) <- impute_df$Mixture
+# impute_df$Mixture <- NULL
+# impute_df$P.value
+```
+
+22 immune checkpoint gene vs CNIH4
+
+```{r}
+
+tmp <- merge(ICGvsCNIH4_df, impute_df, by='row.names', all=TRUE)
+tmp <- na.omit(tmp)
+```
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(stats)
+ICG_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
+             'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
+             'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9',
+             'CD4','LYMLE',
+             'CNIH4'
+             )
+
+ICGvsCNIH4_df <- vst_data %>% select(ICG_names)
+
+cor_method = 'spearman'
+ICGvsCNIH4_mat <- cor(ICGvsCNIH4_df,
+                      use='pairwise.complete.obs',
+                      method = cor_method)
+
+cor.pval.test <- function(x1, x2, ...) {
+  r <- ncol(x1)
+  n <- ncol(x2)
+  p.mat<- matrix(NA, r, n)
+  for (i in 1:r) {
+    for (j in 1:n) {
+      tmp <- cor.test(x1[, i], x2[, j], ...)
+      p.mat[i, j] <- tmp$p.value
+    }
+  }
+  rownames(p.mat) <-  colnames(x1)
+  colnames(p.mat) <- colnames(x2)
+  return(p.mat)
+}
+
+p.ICGvsCNIH4_mat <- cor.pval.test(ICGvsCNIH4_df, 
+                                  ICGvsCNIH4_df, 
+                                  method=cor_method, 
+                                  use='pairwise.complete.obs')
+
+col=c("#001164", 'white', "#FF681E")
+
+p2 <- ggcorrplot(ICGvsCNIH4_mat,
+                 p.mat = p.ICGvsCNIH4_mat, 
+                 hc.order = TRUE,
+                 type = 'full',
+                 color=col,
+                 outline.color = 'black',
+                 lab = T,
+                 lab_size = 2,
+                 insig="blank",
+                 show.diag = T) +
+      scale_fill_gradient2(low=col[1],
+                           mid= col[2],
+                           high=col[3],
+                           na.value = 'gray50',
+                           limits=c(-1,1))+
+      labs(fill="Corr")+
+      theme(axis.text.y = element_text(face="bold", colour="black", size=12),
+            axis.text.x = element_text(face="bold", colour="black", size=12),
+            legend.text = element_text(size = 15),
+            legend.title = element_text( colour="black", size=12))+
+      theme(legend.position="right")
+p2
+```
+
+```{r}
+library(pheatmap)
+myColor <- colorRampPalette(c("#001164", 'white', "#FF681E"))(25)
+
+pheatmap(ICGvsCNIH4_mat,  color = myColor, 
+         #annotation_row = met_annotation, 
+         #annotation_colors = anno_col, 
+         #main = "Vietnam",
+         show_rownames=T,
+         show_colnames=T,
+         annotation_names_row=T,
+         legend = T,
+         annotation_legend = T,annotation=T)
+```
+
+```{r}
+
+dist_matrix <- dist(abs(ICGvsCNIH4_mat), method="euclidean")
+
+hc <- hclust(dist_matrix, method="ward.D")
+hcd <- as.dendrogram(hc)
+# Default plot
+library(ggdendro)
+
+p1<-ggdendrogram(hc, rotate =T, theme_dendro = TRUE,size = 3)+ylab("")+xlab("") +
+    theme_bw()+ theme(legend.position="bottom")+
+  theme(panel.grid.minor = element_blank(),axis.title.x = element_blank(),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text(face="bold",colour="black", size=13),
+        axis.text.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12)) + 
+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))
+p1
 ```
