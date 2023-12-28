@@ -875,44 +875,56 @@ dev.off()
 load('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/Fludigm_CNIH4_PTB.RData')
 
 All_Fluidigm_data <- readxl::read_excel(paste0(path_input,"Raw_data/Data Fluidigm_All.xlsx"),sheet = "All") %>% as.data.frame()
-tmp<-filter(All_Fluidigm_data,(Study%in% c('28TB','29TB'))&(Sample_Type=='Blood')&(Timepoint=='D0')&(Ct_Call=='Pass')&(EvaGreen_Name%in%common_list))
+
+tmp<-filter(All_Fluidigm_data,(Study%in% c('28TB','29TB'))&
+                              (Sample_Type=='Blood')&
+                              (Timepoint=='D0')&
+                              (Ct_Call=='Pass')&
+                              (EvaGreen_Name%in%common_list))
 table(tmp$EvaGreen_Name)
-
+dim(tmp)
 ```
 
-### Other
+### Correlation of 24 immune checkpoint gene vs CNIH4
 
 ```{r}
-impute_df <- read.csv('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt',sep='\t')
-impute_df
-# rownames(impute_df) <- impute_df$Mixture
-# impute_df$Mixture <- NULL
-# impute_df$P.value
+impute_df <- read.csv('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt',sep='\t')# %>% filter(P.value<0.05)
+rownames(impute_df) <- impute_df$Mixture
+impute_df$Mixture <- NULL
 ```
-
-22 immune checkpoint gene vs CNIH4
 
 ```{r}
-
-tmp <- merge(ICGvsCNIH4_df, impute_df, by='row.names', all=TRUE)
-tmp <- na.omit(tmp)
-```
-
-```{r, echo=FALSE}
 library(tidyverse)
 library(stats)
-ICG_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
+library(corrplot) 
+library(ggtext)
+IC_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
              'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
              'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
-             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9',
-             'CD4','LYMLE',
-             'CNIH4'
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3',
+             'LGALS9','CD4','LYMLE',
+             'CNIH4','CT_mean'
              )
 
-ICGvsCNIH4_df <- vst_data %>% select(ICG_names)
+ICvsCNIH4_df <- vst_data %>% select(IC_names)
+ICvsCNIH4_df <- merge(ICvsCNIH4_df, impute_df, by=0) %>% 
+  select(append(IC_names,c("Neutrophils",
+                            "Monocytes",
+                            "T.cells.CD8",
+                            "T.cells.CD4.naive",
+                            "T.cells.CD4.memory.resting",
+                            "T.cells.CD4.memory.activated",
+                            "Macrophages.M0",
+                            "Macrophages.M1"
+                            )))  %>% 
+  rename('HAVCR2'='TIM3',
+         'CD274'='PDL1',
+         'LYMLE'='Lymphocytes',
+         'LGALS9' = 'Galactin9',
+         'PDCD1'= 'PD1')
 
 cor_method = 'spearman'
-ICGvsCNIH4_mat <- cor(ICGvsCNIH4_df,
+ICvsCNIH4_mat <- cor(ICvsCNIH4_df,
                       use='pairwise.complete.obs',
                       method = cor_method)
 
@@ -931,17 +943,43 @@ cor.pval.test <- function(x1, x2, ...) {
   return(p.mat)
 }
 
-p.ICGvsCNIH4_mat <- cor.pval.test(ICGvsCNIH4_df, 
-                                  ICGvsCNIH4_df, 
+p.ICvsCNIH4_mat <- cor.pval.test(ICvsCNIH4_df, 
+                                  ICvsCNIH4_df, 
                                   method=cor_method, 
                                   use='pairwise.complete.obs')
 
 col=c("#001164", 'white', "#FF681E")
 
-p2 <- ggcorrplot(ICGvsCNIH4_mat,
-                 p.mat = p.ICGvsCNIH4_mat, 
+# corrplot(ICvsCNIH4_mat, 
+#          type="upper", 
+#          order="hclust", 
+#          tl.cex = 0.5, 
+#          col=colorRampPalette(c("blue4", "white", "firebrick1"))(100), 
+#          p.mat = p.ICvsCNIH4_mat, 
+#          sig.level = 0.05, 
+#          insig = "blank") + 
+#   theme(axis.text.y = element_text(face="bold", colour="black", size=12),
+#             axis.text.x = element_text(face="bold", colour="black", size=12),
+#             legend.text = element_text(size = 15),
+#             legend.title = element_text( colour="black", size=12))+
+#       theme(legend.position="right")
+mylist <- list()
+for(i in 1:length(names(ICvsCNIH4_df))){
+  if(names(ICvsCNIH4_df)[i]=='CNIH4'){
+    print(i)
+    mylist <- append(mylist, 'red')
+  }
+  else{
+    mylist <- append(mylist, 'black')
+  }
+}
+mylist[28]<-'black'
+mylist[30]<-'red'
+
+p2 <- ggcorrplot(ICvsCNIH4_mat,
+                 p.mat = p.ICvsCNIH4_mat,
                  hc.order = TRUE,
-                 type = 'full',
+                 type="full", 
                  color=col,
                  outline.color = 'black',
                  lab = T,
@@ -954,17 +992,40 @@ p2 <- ggcorrplot(ICGvsCNIH4_mat,
                            na.value = 'gray50',
                            limits=c(-1,1))+
       labs(fill="Corr")+
-      theme(axis.text.y = element_text(face="bold", colour="black", size=12),
-            axis.text.x = element_text(face="bold", colour="black", size=12),
+      theme(#axis.text.y = element_text(face="bold", colour="black", size=12),
+            #axis.text.x = element_text(face="bold", colour="black", size=12),
+            axis.text.y = element_markdown(face="bold", colour=mylist, size=12),
+            axis.text.x = element_markdown(face="bold", colour=mylist, size=12),
             legend.text = element_text(size = 15),
             legend.title = element_text( colour="black", size=12))+
       theme(legend.position="right")
+
+
+png(file=paste0(path_output,"/Figure_correlation_CNIH4vsICs.png"),res=600, units = 'in', width = 6.5, height =6.5)
 p2
+dev.off()
+# grid.newpage()
+```
+
+```{r}
+temp<-vst_data
+temp<- temp[, !duplicated(colnames(temp))]
+ggplot(data=temp, aes(CNIH4,CD274))+
+  geom_point(size=2.5,alpha=0.5)+
+  geom_smooth(method=lm,
+              se = TRUE,
+              alpha = 0.1,
+              size=2,
+              fullrange=TRUE) +theme_light()
+```
+
+```{r}
+dim(tmp)
 ```
 
 ```{r}
 library(pheatmap)
-myColor <- colorRampPalette(c("#001164", 'white', "#FF681E"))(25)
+myColor <- colorRampPalette(c("#001164", 'white', "#FF681E"))(28)
 
 pheatmap(ICGvsCNIH4_mat,  color = myColor, 
          #annotation_row = met_annotation, 
@@ -999,4 +1060,8 @@ p1<-ggdendrogram(hc, rotate =T, theme_dendro = TRUE,size = 3)+ylab("")+xlab("") 
         strip.text=element_text(face = "bold",size=12)) + 
   theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))
 p1
+```
+
+```{r}
+read.csv('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt',sep='\t')
 ```
