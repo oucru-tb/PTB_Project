@@ -888,27 +888,49 @@ dim(tmp)
 ### Correlation of 24 immune checkpoint gene vs CNIH4
 
 ```{r}
-impute_df <- read.csv('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt',sep='\t')# %>% filter(P.value<0.05)
+impute_df <- read.csv('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt',sep='\t') %>% filter(P.value<0.05)
 rownames(impute_df) <- impute_df$Mixture
 impute_df$Mixture <- NULL
 ```
 
 ```{r}
+cor.pval.test <- function(x1, x2, ...) {
+  r <- ncol(x1)
+  n <- ncol(x2)
+  p.mat<- matrix(NA, r, n)
+  for (i in 1:r) {
+    for (j in 1:n) {
+      tmp <- cor.test(x1[, i], x2[, j], ...)
+      p.mat[i, j] <- tmp$p.value
+    }
+  }
+  rownames(p.mat) <-  colnames(x1)
+  colnames(p.mat) <- colnames(x2)
+  return(p.mat)
+}
+```
+
+```{r}
+# All
 library(tidyverse)
 library(stats)
 library(corrplot) 
 library(ggtext)
+library(grid)
+library(dplyr)
 IC_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
              'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
              'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
-             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3',
-             'LGALS9','CD4','LYMLE',
-             'CNIH4','CT_mean'
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','CNIH4',
+
              )
 
 ICvsCNIH4_df <- vst_data %>% select(IC_names)
 ICvsCNIH4_df <- merge(ICvsCNIH4_df, impute_df, by=0) %>% 
-  select(append(IC_names,c("Neutrophils",
+  select(append(IC_names,c('LGALS9','CD4',
+                           'LYMLE',
+                           'CT_mean',
+                           "Neutrophils",
                             "Monocytes",
                             "T.cells.CD8",
                             "T.cells.CD4.naive",
@@ -921,7 +943,8 @@ ICvsCNIH4_df <- merge(ICvsCNIH4_df, impute_df, by=0) %>%
          'CD274'='PDL1',
          'LYMLE'='Lymphocytes',
          'LGALS9' = 'Galactin9',
-         'PDCD1'= 'PD1')
+         'PDCD1'= 'PD1'
+         )
 
 cor_method = 'spearman'
 ICvsCNIH4_mat <- cor(ICvsCNIH4_df,
@@ -947,7 +970,6 @@ p.ICvsCNIH4_mat <- cor.pval.test(ICvsCNIH4_df,
                                   ICvsCNIH4_df, 
                                   method=cor_method, 
                                   use='pairwise.complete.obs')
-
 col=c("#001164", 'white', "#FF681E")
 
 # corrplot(ICvsCNIH4_mat, 
@@ -963,18 +985,18 @@ col=c("#001164", 'white', "#FF681E")
 #             legend.text = element_text(size = 15),
 #             legend.title = element_text( colour="black", size=12))+
 #       theme(legend.position="right")
-mylist <- list()
+col_list <- list()
 for(i in 1:length(names(ICvsCNIH4_df))){
   if(names(ICvsCNIH4_df)[i]=='CNIH4'){
     print(i)
-    mylist <- append(mylist, 'red')
+    col_list <- append(col_list, 'red')
   }
   else{
-    mylist <- append(mylist, 'black')
+    col_list <- append(col_list, 'black')
   }
 }
-mylist[28]<-'black'
-mylist[30]<-'red'
+col_list[28]<-'black'
+col_list[30]<-'red'
 
 p2 <- ggcorrplot(ICvsCNIH4_mat,
                  p.mat = p.ICvsCNIH4_mat,
@@ -994,17 +1016,233 @@ p2 <- ggcorrplot(ICvsCNIH4_mat,
       labs(fill="Corr")+
       theme(#axis.text.y = element_text(face="bold", colour="black", size=12),
             #axis.text.x = element_text(face="bold", colour="black", size=12),
-            axis.text.y = element_markdown(face="bold", colour=mylist, size=12),
-            axis.text.x = element_markdown(face="bold", colour=mylist, size=12),
+            axis.text.y = element_markdown(face="bold", colour=col_list, size=12),
+            axis.text.x = element_markdown(face="bold", colour=col_list, size=12),
             legend.text = element_text(size = 15),
             legend.title = element_text( colour="black", size=12))+
       theme(legend.position="right")
 
 
-png(file=paste0(path_output,"/Figure_correlation_CNIH4vsICs.png"),res=600, units = 'in', width = 6.5, height =6.5)
+#png(file=paste0(path_output,"/Figure_correlation_CNIH4vsICs_new.png"),res=600, units = 'in', width = 12, height =12)
 p2
-dev.off()
+#dev.off()
 # grid.newpage()
+```
+
+```{r}
+#Re-draw
+library(pheatmap)
+library(heatmaply)
+library(ggplot2)
+library(tidyverse)
+library(stats)
+library(corrplot) 
+library(ggtext)
+library(grid)
+library(ggplotify)
+library(patchwork)
+library(egg)
+impute_df <- read.csv('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt',sep='\t')
+rownames(impute_df) <- impute_df$Mixture
+impute_df$Mixture <- NULL
+
+IC_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
+             'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
+             'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','CNIH4')
+ICvsCNIH4_df <- vst_data %>% select(IC_names)
+
+ICvsCNIH4_df <- merge(vst_data, impute_df, by=0) %>% 
+  select(append(IC_names,c('LGALS9','CD4',
+                           'LYMLE',
+                           'CT_mean',
+                           "Neutrophils",
+                            "Monocytes",
+                            "T.cells.CD8",
+                            "T.cells.CD4.naive",
+                            "T.cells.CD4.memory.resting",
+                            "T.cells.CD4.memory.activated",
+                            "Macrophages.M0",
+                            "Macrophages.M1"
+                            )))  %>% 
+  rename('TIM3'='HAVCR2',
+         'PDL1'='CD274',
+         'Lymphocytes'='LYMLE',
+         'Galactin9'='LGALS9',
+         'PD1'='PDCD1'
+         )
+
+cor_method = 'spearman'
+ICvsCNIH4_mat <- cor(ICvsCNIH4_df,
+                      use='pairwise.complete.obs',
+                      method = cor_method)
+p.ICvsCNIH4_mat <- cor.pval.test(ICvsCNIH4_df, 
+                                  ICvsCNIH4_df, 
+                                  method=cor_method, 
+                                  use='pairwise.complete.obs')
+
+col=c("#001164", 'white', "#FF681E")
+#col=c("#5E81AC", 'white', "#D08770")
+#col=c("#5E81AC", '#EBCB8B', "#BF616A")
+##################################################################################################
+
+# ggcorrplot(ICvsCNIH4_mat,
+#            p.mat = p.ICvsCNIH4_mat,
+#            hc.order = TRUE,
+#            type="full", 
+#            color=col,
+#            hc.method = "ward.D2",
+#            outline.color = 'black',
+#            lab = T,
+#            lab_size = 2,
+#            insig="blank",
+#            show.diag = T) +
+#   scale_fill_gradient2(low=col[1],
+#                            mid= col[2],
+#                            high=col[3],
+#                            na.value = 'gray50',
+#                            limits=c(-1,1))+
+#       labs(fill="Corr")+
+#       theme(axis.text.y = element_text(face="bold", colour="black", size=12),
+#             axis.text.x = element_text(face="bold", colour="black", size=12),
+#             legend.text = element_text(size = 15),
+#             legend.title = element_text( colour="black", size=12))+
+#       theme(legend.position="right")
+
+##################################################################################################
+# corrplot(ICvsCNIH4_mat,
+#          type="full",
+#          order="hclust",
+#          tl.cex = 0.5,
+#          col=colorRampPalette(col)(100),
+#          p.mat = p.ICvsCNIH4_mat,
+#          sig.level = 0.05,
+#          insig = "blank") +
+#   theme(axis.text.y = element_text(face="bold", colour="black", size=12),
+#         axis.text.x = element_text(face="bold", colour="black", size=12),
+#         legend.text = element_text(size = 15),
+#         legend.title = element_text( colour="black", size=12))+
+#       theme(legend.position="right") + theme_bw()
+
+##################################################################################################
+# draw_colnames_45 <- function (coln, gaps, ...) {
+#     coord <- pheatmap:::find_coordinates(length(coln), gaps)
+#     x     <-  coord$coord - 0.5 * coord$size
+#     res   <- grid::textGrob(
+#       coln, x = x, y = unit(1, "npc") - unit(3,"bigpts"),
+#       vjust = 0.75, hjust = 1, rot = 45, gp = grid::gpar(...)
+#     )
+#     return(res)
+# }
+# # 
+# assignInNamespace(
+#   x = "draw_colnames",
+#   value = "draw_colnames_45",
+#   ns = asNamespace("pheatmap")
+# )
+# CNIH4 vs 24 ICs
+mat1 <- ICvsCNIH4_mat[1:25,1:25]
+p.mat1 <- p.ICvsCNIH4_mat[1:25,1:25]
+labels1 <-round(mat1,2)
+vals1 <- labels1
+vals1[p.mat1 > 0.05] <- 0
+labels1[p.mat1 > 0.05] <- ''
+
+myBreaks <- c(seq(-1, 0, length.out=ceiling(1000/2) + 1),
+              seq(1/1000, 1, length.out=floor(1000/2)))
+
+p1 <- pheatmap(vals1,
+               color = colorRampPalette(col)(1000),
+               breaks=myBreaks,
+               display_numbers=labels1,
+               show_colnames = F,legend = F)
+row.order <- p1$tree_row$order
+col.order <- p1$tree_col$order
+
+# CNIH4 vs other
+mat2 <- ICvsCNIH4_mat[26:dim(ICvsCNIH4_mat)[1],1:25]
+mat2 <- mat2[,col.order]
+p.mat2 <- p.ICvsCNIH4_mat[26:dim(ICvsCNIH4_mat)[1],1:25]
+p.mat2 <- p.mat2[,col.order]
+
+labels2 <-round(mat2,2)
+vals2 <- labels2
+vals2[p.mat2 > 0.05] <- 0
+labels2[p.mat2 > 0.05] <- ''
+
+
+myBreaks <- c(seq(-1, 0, length.out=ceiling(1000/2) + 1),
+              seq(1/1000, 1, length.out=floor(1000/2)))
+
+p2 <- pheatmap(vals2,
+         color = colorRampPalette(col)(1000),
+         breaks=myBreaks,
+         display_numbers=labels2,
+         cluster_rows=T,
+         cluster_cols=F,legend = F)
+
+grid.arrange(grobs = list(p1[[4]],
+                          p1[[4]]),
+             layout_matrix = rbind(c(1,2),c(1,2)))
+
+plot_grid(as.ggplot(p1), as.ggplot(p2), nrow = 2, 
+          #rel_heights = c(0.1, 0.6),
+          rel_widths = c(0.7,0.7))
+
+
+
+ggarrange(as.ggplot(p1), as.ggplot(p2), ncol=1)
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(as.ggplot(p1)),
+                 ggplotGrob(as.ggplot(p2)),
+                 size = "last"))
+
+pl <- align_plots(as.ggplot(p1), as.ggplot(p2), align="v")
+
+ggarrange(as.ggplot(p1), as.ggplot(p2), ncol=1)
+
+ggdraw(pl[[1]])
+ggdraw(pl[[2]])
+
+plot_grid(as.ggplot(p1), as.ggplot(p1),as.ggplot(p2), align='v',nrow = 2, 
+          rel_heights = c(1/4, 1/4)
+          #rel_widths = c(1/4, 1/4)
+          )
+
+
+
+lm <- rbind(c(0.2,0.2),c(10,10))
+
+grid.arrange(arrangeGrob(as.ggplot(p1),
+                         as.ggplot(p2),
+                         ncol=2, nrow=1),
+             arrangeGrob(as.ggplot(p1), nrow=1),
+             heights=c(5,1), widths=c(1,1))
+
+png(file=paste0(path_output,"/tmp.png"),res=600, units = 'in', width = 15, height =6.5)
+grid.arrange(as.ggplot(p1),as.ggplot(p2), ncol=1, nrow =2)
+dev.off()
+
+
+
+
+
+grid.arrange(arrangeGrob(as.ggplot(p1),as.ggplot(p2),ncol=2, nrow =1, widths = c(6.1,1)),
+             as.ggplot(p2), nrow = 2,ncol=1)
+
+
+
+
+heights = c(1, 1)
+as.ggplot(p1)+as.ggplot(p1)/as.ggplot(p2) + plot_layout(widths = c(0.1, 5))
+
+grid.arrange(as.ggplot(p1),as.ggplot(p2),
+             as.ggplot(p2),ncol=2, widths = unit(20, c("cm")), heights = c(unit(10, c("cm")), unit(10, c("cm"))))
+
+library(cowplot)
+combined_plot <- plot_grid(as.ggplot(p1), as.ggplot(p2), ncol = 1, align = "v")
+plot(combined_plot)
 ```
 
 ```{r}
@@ -1027,7 +1265,8 @@ dim(tmp)
 library(pheatmap)
 myColor <- colorRampPalette(c("#001164", 'white', "#FF681E"))(28)
 
-pheatmap(ICGvsCNIH4_mat,  color = myColor, 
+pheatmap(ICGvsCNIH4_mat,  
+         color = myColor, 
          #annotation_row = met_annotation, 
          #annotation_colors = anno_col, 
          #main = "Vietnam",
