@@ -42,10 +42,11 @@ library(CEMiTool)
 # load("/home/ubuntu/tb_volume/PTB_transcriptomics_project/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
 # clinical <-vst_data%>% select("Patient_ID","Age","SEX","BMI","Timika_score_CXR","Diabetes","Cavity_CXR","Lung_proportion_CXR","CT_mean","Timepoint","GeneXpert","HIV","trial_number","LIMS_ID") %>% rename("SEX"="Sex","trial_number"="Treatment_sensitive")
 
-path_output<- "W:/#oucru-tb/PTB_Project/Triet_Results"
-path_input <- "C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/"
+path_output<- paste0(dirname(getwd()),"/Triet_Results")
+path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
+                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
 ###------Import clinical data------###
-load("C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
+load(paste0(path_input,"/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData"))
 
 clinical <-vst_data%>% select("Patient_ID","Age","SEX","BMI","Timika_score_CXR","Diabetes","Cavity_CXR","Lung_proportion_CXR","CT_mean","Timepoint","GeneXpert","HIV","trial_number","LIMS_ID") %>% rename("SEX"="Sex","trial_number"="Treatment_sensitive")
 ```
@@ -888,7 +889,7 @@ dim(tmp)
 ### Correlation of 24 immune checkpoint gene vs CNIH4
 
 ```{r}
-impute_df <- read.csv('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt',sep='\t') %>% filter(P.value<0.05)
+impute_df <- read.csv(paste0(path_input,'/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt'),sep='\t') %>% filter(P.value<0.05)
 rownames(impute_df) <- impute_df$Mixture
 impute_df$Mixture <- NULL
 ```
@@ -921,7 +922,7 @@ library(dplyr)
 IC_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
              'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
              'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
-             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','CNIH4',
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','CNIH4'
 
              )
 
@@ -1032,17 +1033,19 @@ p2
 ```{r}
 #Re-draw
 library(pheatmap)
-library(heatmaply)
+#library(heatmaply)
 library(ggplot2)
-library(tidyverse)
+#library(tidyverse)
+library(dplyr)
 library(stats)
 library(corrplot) 
 library(ggtext)
 library(grid)
 library(ggplotify)
 library(patchwork)
-library(egg)
-impute_df <- read.csv('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt',sep='\t')
+#library(egg)
+
+impute_df <-  read.csv(paste0(path_input,'/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt'),sep='\t') %>% filter(P.value<0.05)
 rownames(impute_df) <- impute_df$Mixture
 impute_df$Mixture <- NULL
 
@@ -1140,6 +1143,7 @@ col=c("#001164", 'white', "#FF681E")
 #   value = "draw_colnames_45",
 #   ns = asNamespace("pheatmap")
 # )
+
 # CNIH4 vs 24 ICs
 mat1 <- ICvsCNIH4_mat[1:25,1:25]
 p.mat1 <- p.ICvsCNIH4_mat[1:25,1:25]
@@ -1181,68 +1185,68 @@ p2 <- pheatmap(vals2,
          cluster_rows=T,
          cluster_cols=F,legend = F)
 
-grid.arrange(grobs = list(p1[[4]],
-                          p1[[4]]),
-             layout_matrix = rbind(c(1,2),c(1,2)))
-
-plot_grid(as.ggplot(p1), as.ggplot(p2), nrow = 2, 
-          #rel_heights = c(0.1, 0.6),
-          rel_widths = c(0.7,0.7))
-
-
-
-ggarrange(as.ggplot(p1), as.ggplot(p2), ncol=1)
-
-grid.newpage()
-grid.draw(rbind(ggplotGrob(as.ggplot(p1)),
-                 ggplotGrob(as.ggplot(p2)),
-                 size = "last"))
-
-pl <- align_plots(as.ggplot(p1), as.ggplot(p2), align="v")
-
-ggarrange(as.ggplot(p1), as.ggplot(p2), ncol=1)
-
-ggdraw(pl[[1]])
-ggdraw(pl[[2]])
-
-plot_grid(as.ggplot(p1), as.ggplot(p1),as.ggplot(p2), align='v',nrow = 2, 
-          rel_heights = c(1/4, 1/4)
-          #rel_widths = c(1/4, 1/4)
-          )
-
-
-
-lm <- rbind(c(0.2,0.2),c(10,10))
-
-grid.arrange(arrangeGrob(as.ggplot(p1),
-                         as.ggplot(p2),
-                         ncol=2, nrow=1),
-             arrangeGrob(as.ggplot(p1), nrow=1),
-             heights=c(5,1), widths=c(1,1))
-
-png(file=paste0(path_output,"/tmp.png"),res=600, units = 'in', width = 15, height =6.5)
-grid.arrange(as.ggplot(p1),as.ggplot(p2), ncol=1, nrow =2)
-dev.off()
-
-
-
-
-
-grid.arrange(arrangeGrob(as.ggplot(p1),as.ggplot(p2),ncol=2, nrow =1, widths = c(6.1,1)),
-             as.ggplot(p2), nrow = 2,ncol=1)
-
-
-
-
-heights = c(1, 1)
-as.ggplot(p1)+as.ggplot(p1)/as.ggplot(p2) + plot_layout(widths = c(0.1, 5))
-
-grid.arrange(as.ggplot(p1),as.ggplot(p2),
-             as.ggplot(p2),ncol=2, widths = unit(20, c("cm")), heights = c(unit(10, c("cm")), unit(10, c("cm"))))
-
-library(cowplot)
-combined_plot <- plot_grid(as.ggplot(p1), as.ggplot(p2), ncol = 1, align = "v")
-plot(combined_plot)
+# grid.arrange(grobs = list(p1[[4]],
+#                           p1[[4]]),
+#              layout_matrix = rbind(c(1,2),c(1,2)))
+# 
+# plot_grid(as.ggplot(p1), as.ggplot(p2), nrow = 2, 
+#           #rel_heights = c(0.1, 0.6),
+#           rel_widths = c(0.7,0.7))
+# 
+# 
+# 
+# ggarrange(as.ggplot(p1), as.ggplot(p2), ncol=1)
+# 
+# grid.newpage()
+# grid.draw(rbind(ggplotGrob(as.ggplot(p1)),
+#                  ggplotGrob(as.ggplot(p2)),
+#                  size = "last"))
+# 
+# pl <- align_plots(as.ggplot(p1), as.ggplot(p2), align="v")
+# 
+# ggarrange(as.ggplot(p1), as.ggplot(p2), ncol=1)
+# 
+# ggdraw(pl[[1]])
+# ggdraw(pl[[2]])
+# 
+# plot_grid(as.ggplot(p1), as.ggplot(p1),as.ggplot(p2), align='v',nrow = 2, 
+#           rel_heights = c(1/4, 1/4)
+#           #rel_widths = c(1/4, 1/4)
+#           )
+# 
+# 
+# 
+# lm <- rbind(c(0.2,0.2),c(10,10))
+# 
+# grid.arrange(arrangeGrob(as.ggplot(p1),
+#                          as.ggplot(p2),
+#                          ncol=2, nrow=1),
+#              arrangeGrob(as.ggplot(p1), nrow=1),
+#              heights=c(5,1), widths=c(1,1))
+# 
+# png(file=paste0(path_output,"/tmp.png"),res=600, units = 'in', width = 15, height =6.5)
+# grid.arrange(as.ggplot(p1),as.ggplot(p2), ncol=1, nrow =2)
+# dev.off()
+# 
+# 
+# 
+# 
+# 
+# grid.arrange(arrangeGrob(as.ggplot(p1),as.ggplot(p2),ncol=2, nrow =1, widths = c(6.1,1)),
+#              as.ggplot(p2), nrow = 2,ncol=1)
+# 
+# 
+# 
+# 
+# heights = c(1, 1)
+# as.ggplot(p1)+as.ggplot(p1)/as.ggplot(p2) + plot_layout(widths = c(0.1, 5))
+# 
+# grid.arrange(as.ggplot(p1),as.ggplot(p2),
+#              as.ggplot(p2),ncol=2, widths = unit(20, c("cm")), heights = c(unit(10, c("cm")), unit(10, c("cm"))))
+# 
+# library(cowplot)
+# combined_plot <- plot_grid(as.ggplot(p1), as.ggplot(p2), ncol = 1, align = "v")
+# plot(combined_plot)
 ```
 
 ```{r}
