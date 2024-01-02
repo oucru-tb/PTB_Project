@@ -42,6 +42,7 @@ library(CEMiTool)
 # load("/home/ubuntu/tb_volume/PTB_transcriptomics_project/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
 # clinical <-vst_data%>% select("Patient_ID","Age","SEX","BMI","Timika_score_CXR","Diabetes","Cavity_CXR","Lung_proportion_CXR","CT_mean","Timepoint","GeneXpert","HIV","trial_number","LIMS_ID") %>% rename("SEX"="Sex","trial_number"="Treatment_sensitive")
 
+
 path_output<- paste0(dirname(getwd()),"/Triet_Results")
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
@@ -49,6 +50,10 @@ path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
 load(paste0(path_input,"/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData"))
 
 clinical <-vst_data%>% select("Patient_ID","Age","SEX","BMI","Timika_score_CXR","Diabetes","Cavity_CXR","Lung_proportion_CXR","CT_mean","Timepoint","GeneXpert","HIV","trial_number","LIMS_ID") %>% rename("SEX"="Sex","trial_number"="Treatment_sensitive")
+```
+
+```{r}
+load('vst_ensemblID_allPTB_295Sample_18Feb22.RData')
 ```
 
 ```{r include=FALSE}
@@ -886,12 +891,34 @@ table(tmp$EvaGreen_Name)
 dim(tmp)
 ```
 
-### Correlation of 24 immune checkpoint gene vs CNIH4
+### Correlation heatmap CNIH4 vs 25 ICs
+
+```{r}
+library(comprehenr)
+n <- list.files(paste0(path_input,"Raw_data/LM22_ref_CNIH4"))
+n <- to_vec(for(i in 1:length(n)) if(grepl('Hi',  n[i])) n[i])
+
+df <-ICvsCNIH4_df[,1:2]
+
+for(i in 1:length(n)){
+  tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/',n[i]),sep='\t')
+  rownames(tmp0) <- tmp0$GeneSymbol
+  tmp0$GeneSymbol <- NULL
+  tmp0 <- t(tmp0)
+  df0 <-  merge(df, tmp0, by=0)
+  df[n[i]]<-df0$CNIH4
+}
+View(df)
+View(df0)
+```
+
+```{# tmp <- t(tmp0)}
+# colnames(tmp) <- rownames(tnmp0)
+```
 
 ```{r}
 #Re-draw
 library(pheatmap)
-#library(heatmaply)
 library(ggplot2)
 library(tidyverse)
 library(stats)
@@ -900,7 +927,22 @@ library(ggtext)
 library(grid)
 library(ggplotify)
 library(patchwork)
-#library(egg)
+
+cor.pval.test <- function(x1, x2, ...) {
+  r <- ncol(x1)
+  n <- ncol(x2)
+  p.mat<- matrix(NA, r, n)
+  for (i in 1:r) {
+    for (j in 1:n) {
+      tmp <- cor.test(x1[, i], x2[, j], ...)
+      p.mat[i, j] <- tmp$p.value
+    }
+  }
+  rownames(p.mat) <-  colnames(x1)
+  colnames(p.mat) <- colnames(x2)
+  return(p.mat)
+}
+
 
 impute_df <-  read.csv(paste0(path_input,'/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt'),sep='\t') %>% filter(P.value<0.05)
 rownames(impute_df) <- impute_df$Mixture
@@ -912,7 +954,7 @@ IC_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
              'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9','CNIH4')
 ICvsCNIH4_df <- vst_data %>% select(IC_names)
 
-ICvsCNIH4_df <- merge(vst_data, impute_df, by=0) %>% 
+ICvsCNIH4_df <- merge(vst_data, impute_df, by=0) %>% tibble::column_to_rownames('Row.names') %>%
   select(append(IC_names,c('CD4',
                            'LYMLE',
                            'CT_mean',
@@ -930,7 +972,7 @@ ICvsCNIH4_df <- merge(vst_data, impute_df, by=0) %>%
          'Lymphocytes'='LYMLE',
          'LGALS9/Galactin-9'='LGALS9',
          'PDCD1/PD1'='PDCD1'
-         )
+         ) #294 ???
 
 cor_method = 'spearman'
 ICvsCNIH4_mat <- cor(ICvsCNIH4_df,
@@ -944,64 +986,6 @@ p.ICvsCNIH4_mat <- cor.pval.test(ICvsCNIH4_df,
 col=c("#001164", 'white', "#FF681E")
 col=c("#395b85", 'white', "#FF681E")
 #col=c("#5E81AC", '#EBCB8B', "#BF616A")
-
-
-
-##################################################################################################
-
-# ggcorrplot(ICvsCNIH4_mat,
-#            p.mat = p.ICvsCNIH4_mat,
-#            hc.order = TRUE,
-#            type="full", 
-#            color=col,
-#            hc.method = "ward.D2",
-#            outline.color = 'black',
-#            lab = T,
-#            lab_size = 2,
-#            insig="blank",
-#            show.diag = T) +
-#   scale_fill_gradient2(low=col[1],
-#                            mid= col[2],
-#                            high=col[3],
-#                            na.value = 'gray50',
-#                            limits=c(-1,1))+
-#       labs(fill="Corr")+
-#       theme(axis.text.y = element_text(face="bold", colour="black", size=12),
-#             axis.text.x = element_text(face="bold", colour="black", size=12),
-#             legend.text = element_text(size = 15),
-#             legend.title = element_text( colour="black", size=12))+
-#       theme(legend.position="right")
-
-##################################################################################################
-# corrplot(ICvsCNIH4_mat,
-#          type="full",
-#          order="hclust",
-#          tl.cex = 0.5,
-#          col=colorRampPalette(col)(100),
-#          p.mat = p.ICvsCNIH4_mat,
-#          sig.level = 0.05,
-#          insig = "blank") +
-#   theme(axis.text.y = element_text(face="bold", colour="black", size=12),
-#         axis.text.x = element_text(face="bold", colour="black", size=12),
-#         legend.text = element_text(size = 15),
-#         legend.title = element_text( colour="black", size=12))+
-#       theme(legend.position="right") + theme_bw()
-
-##################################################################################################
-
-col_list <- list()
-for(i in 1:length(names(ICvsCNIH4_df))){
-  if(names(ICvsCNIH4_df)[i]=='CNIH4'){
-    print(i)
-    col_list <- append(col_list, 'red')
-  }
-  else{
-    col_list <- append(col_list, 'black')
-  }
-}
-col_list[28]<-'black'
-col_list[30]<-'red'
-
 
 draw_colnames_45 <- function (coln, gaps, ...) {
     coord <- pheatmap:::find_coordinates(length(coln), gaps)
@@ -1059,12 +1043,14 @@ p02 <- pheatmap(vals2,
          cluster_rows=T,
          cluster_cols=F,legend = F)
 
+
+# Export
+
 p1 <- as.ggplot(p01)
 p2 <- as.ggplot(p02)
 p3 <- ggplot() + theme_void()
 
-
-png(file=paste0(path_output,"/Figure4A_correlation_CNIH4vsICs.png"),res=600, units = 'in', 
+png(file=paste0(path_output,"/Figure4A_CorrelationHeatmap_CNIH4vsICs2.png"),res=600, units = 'in', 
     width = 9.5, 
     height =9.5,
     )
@@ -1076,105 +1062,118 @@ grid.arrange(arrangeGrob(p1, p3,
              nrow = 2)
 
 dev.off()
+```
 
-# grid.arrange(as.ggplot(p1),as.ggplot(p2), ncol=1, nrow =2)
-# dev.off()
+```{r}
+#Missing patient
+a <- row.names(vst_data)
+b <- row.names(impute_df)
+setdiff(a,b)
+```
 
+### Boxplot ?
 
+```{r}
+data_long <- gather(impute_df, condition, measurement, B.cells.naive:Neutrophils, factor_key=TRUE)
+p<-ggplot(data=data_long,aes(x=condition,y=measurement))+
+  geom_boxplot(aes(color=condition)) +
+  geom_jitter(height=0,aes(color=condition),alpha=0.1) + 
+  theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+png(file=paste0(path_output,"/Figure_tmp.png"),res=600, units = 'in', 
+    width = 15, 
+    height =9.5,)
+p
+dev.off()
 
+```
 
-# 
-# 
-# library(cowplot)
-# legend <- get_legend(as.ggplot(p1))   # get the legend of the first one plot
-# 
-# # here the plots in a grid
-# prow <- plot_grid( as.ggplot(p1) + theme(legend.position="none"),
-#            # here you add the percentage
-#            as.ggplot(p2) + theme(legend.position="none")+
-#           scale_y_continuous(labels = scales::percent),
-#            align = 'v',
-#            labels = c("A", "B"),
-#            hjust = -1,
-#            nrow = 2)
-# plot_grid( prow, legend, rel_widths = c(3, .3))
-# 
-# 
-# 
-# 
-# grid.arrange(as.ggplot(p1), 
-#              p3,
-#              as.ggplot(p2), 
-#              layout_matrix = matrix(c(1,3,2,3), 
-#                                     nrow = 2))
-# 
-# gA <- ggplotGrob(as.ggplot(p1))
-# gB <- ggplotGrob(as.ggplot(p2))
-# grid::grid.newpage()
-# grid::grid.draw(rbind(gA, gB))
+```{r}
+pivot_longer(impute_df)
+```
 
-# grid.arrange(grobs = list(p1[[4]],
-#                           p1[[4]]),
-#              layout_matrix = rbind(c(1,2),c(1,2)))
-# 
-# plot_grid(as.ggplot(p1), as.ggplot(p2), nrow = 2, 
-#           #rel_heights = c(0.1, 0.6),
-#           rel_widths = c(0.7,0.7))
-# 
-# 
-# 
-# ggarrange(as.ggplot(p1), as.ggplot(p2), ncol=1)
-# 
-# grid.newpage()
-# grid.draw(rbind(ggplotGrob(as.ggplot(p1)),
-#                  ggplotGrob(as.ggplot(p2)),
-#                  size = "last"))
-# 
-# pl <- align_plots(as.ggplot(p1), as.ggplot(p2), align="v")
-# 
-# ggarrange(as.ggplot(p1), as.ggplot(p2), ncol=1)
-# 
-# ggdraw(pl[[1]])
-# ggdraw(pl[[2]])
-# 
-# plot_grid(as.ggplot(p1), as.ggplot(p1),as.ggplot(p2), align='v',nrow = 2, 
-#           rel_heights = c(1/4, 1/4)
-#           #rel_widths = c(1/4, 1/4)
-#           )
-# 
-# 
-# 
-# lm <- rbind(c(0.2,0.2),c(10,10))
-# 
-# grid.arrange(arrangeGrob(as.ggplot(p1),
-#                          as.ggplot(p2),
-#                          ncol=2, nrow=1),
-#              arrangeGrob(as.ggplot(p1), nrow=1),
-#              heights=c(5,1), widths=c(1,1))
-# 
-# png(file=paste0(path_output,"/tmp.png"),res=600, units = 'in', width = 15, height =6.5)
-# grid.arrange(as.ggplot(p1),as.ggplot(p2), ncol=1, nrow =2)
-# dev.off()
-# 
-# 
-# 
-# 
-# 
-# grid.arrange(arrangeGrob(as.ggplot(p1),as.ggplot(p2),ncol=2, nrow =1, widths = c(6.1,1)),
-#              as.ggplot(p2), nrow = 2,ncol=1)
-# 
-# 
-# 
-# 
-# heights = c(1, 1)
-# as.ggplot(p1)+as.ggplot(p1)/as.ggplot(p2) + plot_layout(widths = c(0.1, 5))
-# 
-# grid.arrange(as.ggplot(p1),as.ggplot(p2),
-#              as.ggplot(p2),ncol=2, widths = unit(20, c("cm")), heights = c(unit(10, c("cm")), unit(10, c("cm"))))
-# 
-# library(cowplot)
-# combined_plot <- plot_grid(as.ggplot(p1), as.ggplot(p2), ncol = 1, align = "v")
-# plot(combined_plot)
+### Scatter plot CNIH4 vs 25 ICs
+
+```{r}
+library(ggpmisc)
+library(ggpubr)
+library(cowplot)
+
+df <- vst_data %>%select(IC_names) %>% dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
+         'CD274/PDL1'='CD274',
+         'LGALS9/Galactin-9'='LGALS9',
+         'PDCD1/PD1'='PDCD1'
+         ) #295 patients
+
+for(i in 1:25){
+  
+c <- as.name(colnames(df)[i])
+p1<-ggplot(data=df, 
+       aes_string(x='CNIH4',
+           y=c))+
+  geom_point(alpha=0.2,col='red')+
+  theme_bw()+
+  stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7,method = 'spearman')+
+  theme_bw()+ 
+  ylab(paste0(c," expression"))+
+  xlab("CNIH4 expression")+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+  p[[i]]<-ggdraw(p1)
+  ggdraw(p1)
+}
+
+png(file=paste0(path_output,"/Figure4B_ScatterPlot_CNIH4vsICs.png"),res=600, units = 'in', width=30, height =18)
+ggpubr::ggarrange(
+p[[1]],p[[2]],
+p[[3]],p[[4]],
+p[[5]],p[[6]],
+p[[7]],p[[8]],
+p[[9]],p[[10]],
+p[[11]],p[[12]],
+p[[13]],p[[14]],
+p[[15]],p[[16]],
+p[[17]],p[[18]],
+p[[19]],p[[20]],
+p[[21]],p[[22]],
+p[[23]],p[[24]],
+p[[25]],
+ncol =5,nrow=5)
+dev.off()
+```
+
+### Differential Co-expression for high vs low CNIH4 (compare with healthy control)
+
+```{r}
+#load(file=paste0(path_input,"Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
+#load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
+
+healthy_id <- Cli_All %>% filter(trial_number=='HV'|trial_number=='43TB') %>% select(LIMS_ID)
+healthy_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%healthycontrol_id$LIMS_ID)
+qt<-quantile(healthy_df$CNIH4,c(0.025,0.975))
+qt
+tmp<- vst_data %>% select(CNIH4)
+tmp %<>% mutate(select=ifelse((CNIH4<qt[1]),"LOW",ifelse((CNIH4>qt[2]),'HIGH','_')))
+table(tmp$select)
+
+2
+```
+
+```{r}
+
+```
+
+```{r}
+vst_data
 ```
 
 ```{r}
