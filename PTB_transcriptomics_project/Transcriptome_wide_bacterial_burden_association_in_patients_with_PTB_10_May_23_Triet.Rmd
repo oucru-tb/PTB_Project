@@ -894,29 +894,6 @@ dim(tmp)
 ### Correlation heatmap CNIH4 vs 25 ICs
 
 ```{r}
-library(comprehenr)
-n <- list.files(paste0(path_input,"Raw_data/LM22_ref_CNIH4"))
-n <- to_vec(for(i in 1:length(n)) if(grepl('Hi',  n[i])) n[i])
-
-df <-ICvsCNIH4_df[,1:2]
-
-for(i in 1:length(n)){
-  tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/',n[i]),sep='\t')
-  rownames(tmp0) <- tmp0$GeneSymbol
-  tmp0$GeneSymbol <- NULL
-  tmp0 <- t(tmp0)
-  df0 <-  merge(df, tmp0, by=0)
-  df[n[i]]<-df0$CNIH4
-}
-View(df)
-View(df0)
-```
-
-```{# tmp <- t(tmp0)}
-# colnames(tmp) <- rownames(tnmp0)
-```
-
-```{r}
 #Re-draw
 library(pheatmap)
 library(ggplot2)
@@ -951,39 +928,50 @@ impute_df$Mixture <- NULL
 IC_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
              'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
              'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
-             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9','CNIH4')
-ICvsCNIH4_df <- vst_data %>% select(IC_names)
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9','CNIH4','NEUTLE','HGB',
+             'WBC','LYMLE','MONOLE','EOSLE')
 
-ICvsCNIH4_df <- merge(vst_data, impute_df, by=0) %>% tibble::column_to_rownames('Row.names') %>%
-  select(append(IC_names,c('CD4',
-                           'LYMLE',
-                           'CT_mean',
-                           "Neutrophils",
-                            "Monocytes",
-                            "T.cells.CD8",
-                            "T.cells.CD4.naive",
-                            "T.cells.CD4.memory.resting",
-                            "T.cells.CD4.memory.activated",
-                            "Macrophages.M0",
-                            "Macrophages.M1"
-                            )))  %>% 
-  dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
+ICvsCNIH4_df <- vst_data %>% select(IC_names)
+ICvsCNIH4_df <- merge(ICvsCNIH4_df, impute_df, by=0) %>% tibble::column_to_rownames('Row.names') %>% select("CD200" : "Neutrophils" )
+ICvsCNIH4_df <- ICvsCNIH4_df[vapply(ICvsCNIH4_df, function(x) length(unique(x)) > 1, logical(1L))] %>%   dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
          'CD274/PDL1'='CD274',
          'Lymphocytes'='LYMLE',
          'LGALS9/Galactin-9'='LGALS9',
          'PDCD1/PD1'='PDCD1'
-         ) #294 ???
+         )
+# 
+# dim(ICvsCNIH4_df)
+# %>%
+#   select(append(IC_names,c('CD4',
+#                            'LYMLE',
+#                            'CT_mean',
+#                            "Neutrophils",
+#                             "Monocytes",
+#                             "T.cells.CD8",
+#                             "T.cells.CD4.naive",
+#                             "T.cells.CD4.memory.resting",
+#                             "T.cells.CD4.memory.activated",
+#                             "Macrophages.M0",
+#                             "Macrophages.M1"
+#                             )))  %>% 
+#   dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
+#          'CD274/PDL1'='CD274',
+#          'Lymphocytes'='LYMLE',
+#          'LGALS9/Galactin-9'='LGALS9',
+#          'PDCD1/PD1'='PDCD1'
+#          ) #294 ???
 
 cor_method = 'spearman'
 ICvsCNIH4_mat <- cor(ICvsCNIH4_df,
                       use='pairwise.complete.obs',
                       method = cor_method)
+
 p.ICvsCNIH4_mat <- cor.pval.test(ICvsCNIH4_df, 
                                   ICvsCNIH4_df, 
                                   method=cor_method, 
                                   use='pairwise.complete.obs')
 
-col=c("#001164", 'white', "#FF681E")
+#col=c("#001164", 'white', "#FF681E")
 col=c("#395b85", 'white', "#FF681E")
 #col=c("#5E81AC", '#EBCB8B', "#BF616A")
 
@@ -1018,7 +1006,8 @@ p01 <- pheatmap(vals1,
                color = colorRampPalette(col)(1000),
                breaks=myBreaks,
                display_numbers=labels1,
-               show_colnames = F,legend = T)
+               show_colnames = T,legend = F)
+p01
 row.order <- p01$tree_row$order
 col.order <- p01$tree_col$order
 
@@ -1041,27 +1030,40 @@ p02 <- pheatmap(vals2,
          breaks=myBreaks,
          display_numbers=labels2,
          cluster_rows=T,
-         cluster_cols=F,legend = F)
+         cluster_cols=T,legend = T)
 
 
 # Export
+# p1 <- as.ggplot(p01)
+# p2 <- as.ggplot(p02)
+# p3 <- ggplot() + theme_void()
+# 
+# png(file=paste0(path_output,"/Figure4A_CorrelationHeatmap_CNIH4vsICs2.png"),res=600, units = 'in', 
+#     width = 9.5, 
+#     height =9.5,
+#     )
+# 
+# grid.arrange(arrangeGrob(p1, p3,
+#                          widths = c(0.9825,1-0.9825)),
+#              p2,
+#              heights = c(0.6,0.4),
+#              nrow = 2)
+# 
+# dev.off()
 
 p1 <- as.ggplot(p01)
 p2 <- as.ggplot(p02)
-p3 <- ggplot() + theme_void()
 
-png(file=paste0(path_output,"/Figure4A_CorrelationHeatmap_CNIH4vsICs2.png"),res=600, units = 'in', 
-    width = 9.5, 
-    height =9.5,
+png(file=paste0(path_output,"/Figure4A_CorrelationHeatmap_CNIH4vsICs2.png"),res=900, units = 'in',
+    width = 20,
+    height =10,
     )
-
-grid.arrange(arrangeGrob(p1, p3,
-                         widths = c(0.9825,1-0.9825)),
+grid.arrange(p1,
              p2,
-             heights = c(0.6,0.4),
-             nrow = 2)
+             nrow = 1)
 
 dev.off()
+
 ```
 
 ```{r}
@@ -1072,6 +1074,26 @@ setdiff(a,b)
 ```
 
 ### Boxplot ?
+
+```{r}
+{r}
+library(comprehenr)
+n <- list.files(paste0(path_input,"Raw_data/LM22_ref_CNIH4"))
+n <- to_vec(for(i in 1:length(n)) if(grepl('Hi',  n[i])) n[i])
+
+df <-ICvsCNIH4_df[,1:2]
+
+for(i in 1:length(n)){
+  tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/',n[i]),sep='\t')
+  rownames(tmp0) <- tmp0$GeneSymbol
+  tmp0$GeneSymbol <- NULL
+  tmp0 <- t(tmp0)
+  df0 <-  merge(df, tmp0, by=0)
+  df[n[i]]<-df0$CNIH4
+}
+View(df)
+View(df0)
+```
 
 ```{r}
 data_long <- gather(impute_df, condition, measurement, B.cells.naive:Neutrophils, factor_key=TRUE)
@@ -1085,10 +1107,6 @@ png(file=paste0(path_output,"/Figure_tmp.png"),res=600, units = 'in',
 p
 dev.off()
 
-```
-
-```{r}
-pivot_longer(impute_df)
 ```
 
 ### Scatter plot CNIH4 vs 25 ICs
@@ -1154,27 +1172,409 @@ dev.off()
 ### Differential Co-expression for high vs low CNIH4 (compare with healthy control)
 
 ```{r}
-#load(file=paste0(path_input,"Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
-#load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
+load(file=paste0(path_input,"Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
+load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
+```
 
+```{r}
 healthy_id <- Cli_All %>% filter(trial_number=='HV'|trial_number=='43TB') %>% select(LIMS_ID)
-healthy_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%healthycontrol_id$LIMS_ID)
-qt<-quantile(healthy_df$CNIH4,c(0.025,0.975))
-qt
-tmp<- vst_data %>% select(CNIH4)
-tmp %<>% mutate(select=ifelse((CNIH4<qt[1]),"LOW",ifelse((CNIH4>qt[2]),'HIGH','_')))
+healthy_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%healthy_id$LIMS_ID)
+qt<-quantile(healthy_df$CNIH4,c(0.75)) #Q3 CNIH4 of healthy control 
+
+PTB_id <-  Cli_All %>% filter(trial_number=='MDR_PTB'|trial_number=='DS_PTB') %>% select(LIMS_ID)
+PTB_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%PTB_id$LIMS_ID)
+tmp <- PTB_df %>% select(CNIH4) %>% mutate(select=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
 table(tmp$select)
+rownames(tmp) <- PTB_df$LIMS_ID
+tmp1<-merge(vst_data,tmp[,2, drop=FALSE],by=0) #%>% select(append(IC_names[1:26],c('LIMS_ID','select')))
+rownames(tmp1) <- tmp1$LIMS_ID
+tmp1$LIMS_ID <- NULL
 
-2
+##############################################################
+
+highCNIH4_df<-vst_data[vst_data$LIMS_ID %in% rownames(filter(tmp,select=='HIGH')),]
+lowCNIH4_df<-vst_data[vst_data$LIMS_ID %in% rownames(filter(tmp,select=='LOW')),]
+
+ICvslowCNIH4_df <- lowCNIH4_df %>% select(IC_names[1:26])
+ICvshighCNIH4_df <- highCNIH4_df %>% select(IC_names[1:26])
+###############################################################
+cor_method = 'spearman'
+ICvslowCNIH4_mat <- cor(ICvslowCNIH4_df,
+                      use='pairwise.complete.obs',
+                      method = cor_method)
+
+p.ICvslowCNIH4_mat <- cor.pval.test(ICvslowCNIH4_df, 
+                                  ICvslowCNIH4_df, 
+                                  method=cor_method, 
+                                  use='pairwise.complete.obs')
+
+ICvshighCNIH4_mat <- cor(ICvshighCNIH4_df,
+                      use='pairwise.complete.obs',
+                      method = cor_method)
+p.ICvshighCNIH4_mat <- cor.pval.test(ICvshighCNIH4_df, 
+                                  ICvshighCNIH4_df, 
+                                  method=cor_method, 
+                                  use='pairwise.complete.obs')
+
+
+
 ```
 
 ```{r}
-
+# mat1 <- ICvslowCNIH4_mat
+# p.mat1 <- p.ICvslowCNIH4_mat
+# labels1 <-round(mat1,2)
+# vals1 <- labels1
+# vals1[p.mat1 > 0.05] <- 0
+# labels1[p.mat1 > 0.05] <- ''
+# 
+# myBreaks <- c(seq(-1, 0, length.out=ceiling(1000/2) + 1),
+#               seq(1/1000, 1, length.out=floor(1000/2)))
+# 
+# p01 <- pheatmap(vals1,
+#                color = colorRampPalette(col)(1000),
+#                breaks=myBreaks,
+#                display_numbers=labels1,
+#                show_colnames = T,legend = F)
+# 
+# mat1 <- ICvshighCNIH4_mat
+# p.mat1 <- p.ICvshighCNIH4_mat
+# labels1 <-round(mat1,2)
+# vals1 <- labels1
+# vals1[p.mat1 > 0.05] <- 0
+# labels1[p.mat1 > 0.05] <- ''
+# 
+# myBreaks <- c(seq(-1, 0, length.out=ceiling(1000/2) + 1),
+#               seq(1/1000, 1, length.out=floor(1000/2)))
+# 
+# p01 <- pheatmap(vals1,
+#                color = colorRampPalette(col)(1000),
+#                breaks=myBreaks,
+#                display_numbers=labels1,
+#                show_colnames = T,legend = F)
 ```
 
 ```{r}
-vst_data
+library(corrplot)
+library(ggplotify)
+
+col1 =c("#395b85", 'white', "#FF681E")
+col2 = c("#00b8ff","black","magenta")
+#col2 = c("#d600ff","black","#00ff9f")
+
+p1<-ggcorrplot(ICvslowCNIH4_mat,
+           p.mat = p.ICvslowCNIH4_mat, 
+           colors = col1,
+           lab = F, 
+           show.legend = F,
+           lab_size = 2,
+           insig="blank",
+           outline.color = 'black',)+
+  theme(legend.position="")+
+  labs(fill="Corr")+
+  theme(axis.text.x = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text(face="bold", colour="black", size=12),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12))
+
+p2<-ggcorrplot(ICvshighCNIH4_mat,
+           p.mat = p.ICvshighCNIH4_mat, 
+           colors = col1,
+           lab = F,
+           lab_size = 2,
+           insig="blank",
+           outline.color = 'black')+theme(legend.position="right")+
+  labs(fill="Corr")+
+  theme(axis.text.x = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text(face="bold", colour="white", size=6),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12))+
+  guides(fill = guide_colourbar(title = "Corr",
+                                size=15,
+                                barheight = 40))
+# leg <- ggpubr::get_legend(p2)
+# p2 <- p2 + theme(legend.position="")
+
+
+# diff_mat0 <- ICvshighCNIH4_mat - ICvslowCNIH4_mat
+# diff_mat <- (diff_mat0 - mean(diff_mat0))/sd(diff_mat0) #z-score
+# #ggcorrplot(diff_mat) + scale_fill_gradient2(limit = c(-3,3), low = col[1], high =  col[3], mid = col[2], midpoint = 0)
+# 
+# p3<-ggcorrplot(diff_mat,
+#            p.mat = p.ICvshighCNIH4_mat, 
+#            colors = col2,
+#            show.diag = TRUE,
+#            lab = F, 
+#            lab_size = 2,
+#            insig="blank",
+#            outline.color = 'black')+
+#   theme(legend.position="right")+
+#   labs(fill="Differential Z-scores")+
+#   scale_fill_gradient2(limit = c(-5,5), 
+#                        low = col2[1], 
+#                        high =  col2[3], 
+#                        mid = col2[2], midpoint = 0)+
+#   theme(axis.text.x = element_text(face="bold", colour="black", size=12),
+#         axis.text.y = element_text(face="bold", colour="black", size=12),
+#         legend.text = element_text(size = 15),
+#         legend.title = element_text( colour="black", size=12,angle = -90,
+#                                      hjust = 0.5, vjust = 0.5)) +   
+#   guides(fill = guide_colourbar(title = "Differential Z-scores",
+#                                 title.position = "right",
+#                                 #title.vjust = 0.5,
+#                                 barheight = 24.7))
 ```
+
+### differential z-score and p-value
+
+```{r}
+tmp1
+```
+
+```{r}
+library(dcanr)
+emat <- t(tmp1%>%select(IC_names[1:26])) #tranpose
+condition <- tmp1$select # high and low
+scores <- dcScore(emat, 
+                  condition,
+                  dc.method = "zscore",
+                  cor.method = 'spearman')
+raw_p <- dcTest(scores, emat, condition)
+adj_p <- dcAdjust(raw_p, f = p.adjust, method = 'fdr')
+
+p3 <- ggcorrplot(scores,
+           p.mat = raw_p, 
+           colors = col2,
+           show.diag = FALSE,
+           lab = F, 
+           lab_size = 2,
+           insig="blank",ggtheme =ggplot2::theme_void,
+           outline.color = 'black',
+           ) +
+  theme(legend.position="right")+
+  #theme_void()+
+  labs(fill="Differential Z-scores")+
+  scale_fill_gradient2(limit = c(-5,5), 
+                       low = col2[1], 
+                       high =  col2[3], 
+                       mid = col2[2], midpoint = 0)+
+  
+  theme(axis.text.x = element_text(face="bold", colour="black", size=12,angle = 45),
+        axis.text.y = element_text(face="bold", colour="black", size=12,hjust = 1),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12,angle = -90,
+                                     hjust = 0.5, vjust = 0.5),
+        panel.border = element_rect(colour = "black", fill=NA, size=1,linewidth = 1)) +   
+  guides(fill = guide_colourbar(title = "Differential Z-scores",
+                                title.position = "right",size=15,
+                                barheight = 40))
+p3
+# library(cowplot)
+# 
+# png(file=paste0(path_output,"/Figure4C_differential_coexpression_heatmap.png"),res=600, units = 'in', width=30, height =10)
+# plot_grid(p1, p2, p3, align = "h", ncol = 3, rel_widths = c(1/3.19, 1/3, 1/3))
+# dev.off()
+```
+
+```{r}
+library(dcanr)
+library(igraph)
+library(qgraph)
+
+emat <- t(tmp1%>%select(IC_names[1:26])) #tranpose
+condition <- tmp1$select # high and low
+
+#apply the z-score method with Spearman correlations
+scores <- dcScore(emat, 
+                  condition,
+                  dc.method = "zscore",
+                  cor.method = 'spearman')
+#perform a statistical test: the z-test is selected automatically
+raw_p <- dcTest(scores, emat, condition)
+#adjust p-values (raw p-values from dcTest should NOT be modified)
+adj_p <- dcAdjust(raw_p, f = p.adjust, method = 'fdr')
+
+#get the differential network
+dcnet <- dcNetwork(scores,
+                   raw_p,
+                   thresh=0.05)
+#> Warning in dcNetwork(z_scores, adj_p): default thresholds being selected
+
+list <- get.edgelist(dcnet)
+E(dcnet)$color <-  apply(as.data.frame(get.edgelist(dcnet)), 2, 
+                 FUN = function(x) V(dcnet)$color[x[1]])
+
+g<-plot(dcnet, 
+     #vertex.label = '',
+     vertex.size=3,
+     vertex.label.cex = 0.5,
+     vertex.label.dist=-1,
+     edge.width=1,
+     main = 'Differential co-expression network',
+     width=2,
+     #edge.color= E(dcnet)$color, 
+     layout= layout_nicely
+     )
+
+plot(dcnet,layout=layout_with_fr,vertex.size=4,vertex.label=NA)
+
+library(qgraph)
+
+set.seed(123)
+e <- get.edgelist(dcnet,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,
+                                       vcount=vcount(dcnet),
+                                       area=7*(vcount(dcnet)^2),
+                                       repulse.rad=(vcount(dcnet)^3.1)
+                                       )
+plot(dcnet,layout=l,
+     vertex.size=4,
+     vertex.size=3,
+     vertex.label.cex = 0.5,
+     vertex.label.dist=0.5,
+     edge.width=1,
+     main = 'Differential co-expression network',
+     width=2,
+     )
+
+e <- get.edgelist(dcnet,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,
+                                       vcount=vcount(dcnet),
+                                       area=8*(vcount(dcnet)^2),
+                                       repulse.rad=(vcount(dcnet)^3.3)
+                                       )
+png(file=paste0(path_output,"/Figure4C_differential_coexpression_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
+
+plot(dcnet,layout=l,
+     vertex.size=2,
+     vertex.label.cex = 0.5,
+     vertex.label.dist=0.5,
+     edge.width=1,
+     main = 'Differential co-expression network',
+     width=2,
+     layout.rotate = 100
+     )
+dev.off()
+```
+
+```{r}
+library(dcanr)
+
+module_df <- read.csv(file=paste0(path_input,"Raw_data/Module_TBMMortality_Supplementary_Tables.csv"))
+blue_genes <- module_df %>% filter(module=='blue')
+blue_genes_df <- vst_data %>% select(any_of(blue_genes$Gene.symbol))
+
+bluevslowCNIH4_df <- lowCNIH4_df %>% select(any_of(blue_genes$Gene.symbol))
+bluevshighCNIH4_df <- highCNIH4_df %>% select(any_of(blue_genes$Gene.symbol))
+
+###############################################################
+# cor_method = 'spearman'
+# bluevslowCNIH4_mat <- cor(bluevslowCNIH4_df,
+#                       use='pairwise.complete.obs',
+#                       method = cor_method)
+# p.bluevslowCNIH4_mat <- cor.pval.test(bluevslowCNIH4_df,
+#                                   bluevslowCNIH4_df,
+#                                   method=cor_method,
+#                                   use='pairwise.complete.obs')
+# 
+# bluevshighCNIH4_mat <- cor(bluevshighCNIH4_df,
+#                       use='pairwise.complete.obs',
+#                       method = cor_method)
+# p.bluevshighCNIH4_mat <- cor.pval.test(bluevshighCNIH4_df,
+#                                   bluevshighCNIH4_df,
+#                                   method=cor_method,
+#                                   use='pairwise.complete.obs')
+
+emat <- t(tmp1 %>% select(any_of(blue_genes$Gene.symbol))) #tranpose
+condition <- tmp1$select # high and low
+scores <- dcScore(emat, 
+                  condition,
+                  dc.method = "zscore",
+                  cor.method = 'spearman')
+raw_p <- dcTest(scores, emat, condition)
+adj_p <- dcAdjust(raw_p, f = p.adjust, method = 'fdr')
+
+sigf_bluevslowCNIH4_mat <- bluevslowCNIH4_mat
+sigf_bluevslowCNIH4_mat[adj_p>=0.05] <- NA
+
+sigf_bluevshighCNIH4_mat <- bluevshighCNIH4_mat
+sigf_bluevshighCNIH4_mat[adj_p>=0.05] <- NA
+
+low_corr <- sigf_bluevslowCNIH4_mat[upper.tri(sigf_bluevslowCNIH4_mat,diag=F)]
+high_corr <- sigf_bluevshighCNIH4_mat[upper.tri(sigf_bluevshighCNIH4_mat,diag=F)]
+
+low_high <- data.frame(low_corr,high_corr)
+
+names(low_high) <- c('Low CNIH4','High CNIH4')
+df <- pivot_longer(low_high,colnames(low_high))
+names(df) <- c('CNIH4level','Coexpression')
+
+ggplot(data=df,
+       aes(x=reorder(CNIH4level, Coexpression,na.rm = TRUE),
+           y=Coexpression))+
+  geom_violin(aes(fill=CNIH4level),width=0.7,trim=FALSE)+
+  geom_boxplot(aes(fill=CNIH4level),width=0.1)+
+  #geom_jitter(aes(color=CNIH4level),height=0,width=0.2,alpha=0.3)+
+  theme_bw()+
+  theme(axis.text.x = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text(face="bold", colour="black", size=12),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        axis.title.y=element_text(size=14,face="bold"))+
+  xlab('') + 
+  ylab('Coexpression of blue module genes (FDR<0.05)')
+# ggcorrplot(scores,
+#            p.mat = raw_p, 
+#            colors = col2,
+#            show.diag = FALSE,
+#            lab = F, 
+#            lab_size = 2,
+#            insig="blank",ggtheme =ggplot2::theme_void,
+#            outline.color = 'black',
+#            ) + 
+#   theme(axis.text.x=element_blank(), #remove x axis labels
+#         axis.ticks.x=element_blank(), #remove x axis ticks
+#         axis.text.y=element_blank(),  #remove y axis labels
+#         axis.ticks.y=element_blank()  #remove y axis ticks
+#         )
+```
+
+### Box plot
+
+```{r}
+
+sigf_ICvslowCNIH4_mat <- ICvslowCNIH4_mat
+sigf_ICvslowCNIH4_mat[raw_p>=0.05] <- NA
+
+sigf_ICvshighCNIH4_mat <- ICvshighCNIH4_mat
+sigf_ICvshighCNIH4_mat[raw_p>=0.05] <- NA
+
+low_corr <- abs(sigf_ICvslowCNIH4_mat[upper.tri(sigf_ICvslowCNIH4_mat,diag=F)])
+high_corr <- abs(sigf_ICvshighCNIH4_mat[upper.tri(sigf_ICvshighCNIH4_mat,diag=F)])
+
+low_high <- data.frame(low_corr,high_corr)
+
+names(low_high) <- c('Low CNIH4','High CNIH4')
+df <- pivot_longer(low_high,colnames(low_high))
+names(df) <- c('CNIH4level','Coexpression')
+
+ggplot(data=df,
+       aes(x=reorder(CNIH4level, Coexpression,na.rm = TRUE),
+           y=Coexpression))+
+  geom_violin(aes(fill=CNIH4level),width=0.7,trim=FALSE)+
+  geom_boxplot(aes(fill=CNIH4level),width=0.1)+
+  #geom_jitter(aes(color=CNIH4level),height=0,width=0.2,alpha=0.3)+
+  theme_bw()+
+  theme(axis.text.x = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text(face="bold", colour="black", size=12),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        axis.title.y=element_text(size=14,face="bold"))+
+  xlab('') + 
+  ylab('Absolute Coexpression of 25 immune checkpoint genes')
+```
+
+### Draft
 
 ```{r}
 temp<-vst_data
