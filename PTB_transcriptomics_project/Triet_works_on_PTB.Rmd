@@ -56,6 +56,11 @@ impute_df <-  read.csv(paste0(path_input,'/Raw_data/CIBERSORTx_Adjusted_CPM_LM22
 rownames(impute_df) <- impute_df$Mixture
 impute_df$Mixture <- NULL
 ###------AllData-----###
+#load(file=paste0(path_input,"Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
+#load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
+```
+
+```{r}
 load(file=paste0(path_input,"Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
 load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
 ```
@@ -63,16 +68,6 @@ load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
 ## PTB
 
 ### 1. Correlation heatmap CNIH4 vs 25 ICs
-
-```{r}
-
-library(tidyverse)
-library(stats)
-library(corrplot) 
-library(ggtext)
-library(grid)
-library(patchwork)
-```
 
 ```{r}
 library(pheatmap)
@@ -304,7 +299,7 @@ adj_p <- dcAdjust(raw_p, f = p.adjust, method = 'fdr')
 
 ```
 
-#### Differential Coexpression Heatmap
+#### 3.1. Differential Coexpression Heatmap
 
 ```{r}
 col1 =c("#395b85", 'white', "#FF681E")
@@ -374,7 +369,7 @@ plot_grid(p1, p2, p3, align = "h", ncol = 3, rel_widths = c(1/3.19, 1/3, 1/3))
 dev.off()
 ```
 
-#### Differential Coexpression Network
+#### 3.2. Differential Coexpression Network
 
 ```{r}
 library(igraph)
@@ -405,7 +400,7 @@ plot(dcnet,layout=l,
 dev.off()
 ```
 
-#### Boxplot of pairwise coexpression in low and high CNIH4 group
+#### 3.3. Boxplot of pairwise coexpression in low and high CNIH4 group
 
 ```{r}
 library(dcanr)
@@ -479,22 +474,61 @@ p
 dev.off()
 ```
 
+### Boxplot
+
+```{r}
+
+library(comprehenr)
+library(stringr)
+
+n <- list.files(paste0(path_input,"Raw_data/LM22_ref_CNIH4"))
+n <- to_vec(for(i in 1:length(n)) if(grepl('Hi',  n[i])) n[i])
+df <- ICvsCNIH4_df[,1:2]
+  
+for(i in 1:length(n)){
+  tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/',n[i]),sep='\t')
+  rownames(tmp0) <- tmp0$GeneSymbol
+  tmp0$GeneSymbol <- NULL
+  tmp0 <- t(tmp0)
+  
+  df0 <-  merge(df, tmp0, by=0)
+  print(dim(df0))
+  #df[n[i]]<-df0$CNIH4
+  df[n[i]]<-df0$CD274
+}
+df <- df[,3:length(df)]
+
+data_long <- gather(df, condition, measurement, CIBERSORTxHiRes_NA_Bcells_Window20.txt:CIBERSORTxHiRes_NA_TcellsCD8_Window20.txt, factor_key=TRUE)
+
+ggplot(data=data_long,
+          aes(x=condition,y=measurement))+
+  geom_boxplot(aes(color=condition)) +
+  geom_jitter(height=0,aes(color=condition),alpha=0.1) + 
+  theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
 ## TBM
 
 ### 1. Correlation heatmap CNIH4 vs 25 ICs
 
 ```{r}
+dim(TBM_df)
+filter(count_data_adjusted_ComBat,trial_number=='26TB')
+```
+
+```{r}
 TBM_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,trial_number=='26TB'|trial_number=='27TB')$LIMS_ID)
+
+
 rownames(TBM_df) <- TBM_df$LIMS_ID
 IC_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
              'CD28','BTLA', 'CD27', 
             #'HAVCR2', 'TNFRSF14',
-            'CD274', 
+            'CD274',
             'TNFSF14', 'TNFRSF4',
              'CD276',
             'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
              'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9','CNIH4'
-            #'NEUTLE','HGB','WBC','LYMLE','MONOLE','EOSLE'
             )
 cor.pval.test <- function(x1, x2, ...) {
   r <- ncol(x1)
@@ -568,6 +602,7 @@ p
 
 ```{r}
 healthy_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,trial_number=='HV'|trial_number=='43TB')$LIMS_ID)
+
 qt<-quantile(healthy_df$CNIH4,c(0.75)) #Q3 CNIH4 of healthy control
 
 tmp <- TBM_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
