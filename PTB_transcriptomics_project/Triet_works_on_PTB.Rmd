@@ -56,8 +56,8 @@ impute_df <-  read.csv(paste0(path_input,'/Raw_data/CIBERSORTx_Adjusted_CPM_LM22
 rownames(impute_df) <- impute_df$Mixture
 impute_df$Mixture <- NULL
 ###------AllData-----###
-#load(file=paste0(path_input,"Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
-#load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
+load(file=paste0(path_input,"Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
+load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
 ```
 
 ```{r}
@@ -178,17 +178,50 @@ p02 <- pheatmap(vals2,
 p1 <- as.ggplot(p01)
 p2 <- as.ggplot(p02)
 
-png(file=paste0(path_output,"/Figure4A_CorrelationHeatmap_CNIH4vsICs.png"),res=900, units = 'in',
-    width = 20,
-    height =10,)
+# png(file=paste0(path_output,"/Figure4A_CorrelationHeatmap_CNIH4vsICs.png"),res=900, units = 'in',
+#     width = 20,
+#     height =10,)
 grid.arrange(p1,
              p2,
              nrow = 1)
-
-dev.off()
+# 
+# dev.off()
 ```
 
 ### 2. Scatter plot CNIH4 vs 25 ICs
+
+```{r}
+library(ggpmisc)
+library(ggpubr)
+df <- vst_data %>%select(IC_names) %>% dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
+         'CD274/PDL1'='CD274',
+         'LGALS9/Galactin-9'='LGALS9',
+         'PDCD1/PD1'='PDCD1'
+         )
+
+p1<-ggplot(data=df, aes_string(x='CNIH4',y=as.name(colnames(df)[11])))+
+  geom_point(alpha=0.2,col='red')+
+  theme_bw()+
+  stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7,method = 'spearman')+
+  theme_bw()+ 
+  ylab(paste0(as.name(colnames(df)[11])," expression"))+
+  xlab("CNIH4 expression")+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+png(file=paste0(path_output,"/Figure4B_scatterplot_CNIH4vsPDL1.png"),res=600, units = 'in', width=15/2, height =9/2)
+p1
+dev.off()
+```
 
 ```{r}
 library(ggpmisc)
@@ -296,12 +329,49 @@ scores <- dcScore(emat,
                   cor.method = 'spearman')
 raw_p <- dcTest(scores, emat, condition)
 adj_p <- dcAdjust(raw_p, f = p.adjust, method = 'fdr')
+```
+
+```{r}
+highlow_mat <- ICvslowCNIH4_mat
+highlow_mat[upper.tri(ICvslowCNIH4_mat,diag=F)] <- ICvshighCNIH4_mat[upper.tri(ICvshighCNIH4_mat,diag=F)]
+p.highlow_mat <- p.ICvslowCNIH4_mat
+p.highlow_mat[upper.tri(p.ICvslowCNIH4_mat,diag=F)] <- p.ICvshighCNIH4_mat[upper.tri(p.ICvshighCNIH4_mat,diag=F)]
+
+p12<-ggcorrplot(highlow_mat,
+           p.mat = p.highlow_mat, 
+           colors = col1,
+           lab = F,
+           lab_size = 2,
+           insig="blank",
+           outline.color = 'black')+theme(legend.position="right")+
+  labs(fill="Corr")+
+  theme(axis.text.x = element_text(face="bold", colour="black", size=12,angle=135),
+        axis.text.y = element_text(face="bold", colour="black", size=12,angle=135),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12))+
+  guides(fill = guide_colourbar(title = "Corr",
+                                size=15,
+                                barheight = 40)) + 
+  scale_fill_gradientn(colors=natparks.pals("Acadia"),limit = c(-1,1))
+print(p12, vp = viewport(angle = -135))
+
+png(file=paste0(path_output,"/Figure4C_differential_coexpression_heatmap3.png"),res=600, units = 'in', width=20, height =10)
+plot_grid(p12,p3, align = "h", ncol = 2, rel_widths = c(1/5, 1/5))
+dev.off()
+```
+
+```{r}
+library(grid)
 
 ```
 
 #### 3.1. Differential Coexpression Heatmap
 
 ```{r}
+library(cowplot)
+library(scico)
+library(NatParksPalettes)
+
 col1 =c("#395b85", 'white', "#FF681E")
 col2 = c("#00b8ff","black","magenta")
 
@@ -318,7 +388,8 @@ p1<-ggcorrplot(ICvslowCNIH4_mat,
   theme(axis.text.x = element_text(face="bold", colour="black", size=12),
         axis.text.y = element_text(face="bold", colour="black", size=12),
         legend.text = element_text(size = 15),
-        legend.title = element_text( colour="black", size=12))
+        legend.title = element_text( colour="black", size=12))+
+  scale_fill_gradientn(colors=natparks.pals("Acadia"),limit = c(-1,1))
 
 p2<-ggcorrplot(ICvshighCNIH4_mat,
            p.mat = p.ICvshighCNIH4_mat, 
@@ -334,8 +405,9 @@ p2<-ggcorrplot(ICvshighCNIH4_mat,
         legend.title = element_text( colour="black", size=12))+
   guides(fill = guide_colourbar(title = "Corr",
                                 size=15,
-                                barheight = 40))
-
+                                barheight = 40)) + 
+  scale_fill_gradientn(colors=natparks.pals("Acadia"),limit = c(-1,1))
+  
 p3 <- ggcorrplot(scores,
            p.mat = raw_p, 
            colors = col2,
@@ -362,9 +434,9 @@ p3 <- ggcorrplot(scores,
   guides(fill = guide_colourbar(title = "Differential Z-scores",
                                 title.position = "right",size=15,
                                 barheight = 40))
-# library(cowplot)
 # 
-png(file=paste0(path_output,"/Figure4C_differential_coexpression_heatmap.png"),res=600, units = 'in', width=30, height =10)
+# 
+png(file=paste0(path_output,"/Figure4C_differential_coexpression_heatmap2.png"),res=600, units = 'in', width=30, height =10)
 plot_grid(p1, p2, p3, align = "h", ncol = 3, rel_widths = c(1/3.19, 1/3, 1/3))
 dev.off()
 ```
@@ -386,7 +458,7 @@ l <- qgraph.layout.fruchtermanreingold(e,
                                        area=8*(vcount(dcnet)^2),
                                        repulse.rad=(vcount(dcnet)^3.3)
                                        )
-png(file=paste0(path_output,"/Figure4C_differential_coexpression_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
+#png(file=paste0(path_output,"/Figure4C_differential_coexpression_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
 
 plot(dcnet,layout=l,
      vertex.size=2,
@@ -397,7 +469,7 @@ plot(dcnet,layout=l,
      width=2,
      layout.rotate = 100
      )
-dev.off()
+#dev.off()
 ```
 
 #### 3.3. Boxplot of pairwise coexpression in low and high CNIH4 group
@@ -435,7 +507,7 @@ p<-ggplot(data=df,
            y=Coexpression)) +
   theme_bw() +
   geom_violin(aes(color=CNIH4level,fill=CNIH4level),
-              width=0.7,alpha=0.2,
+              width=0.7,alpha=0.6,
               trim=FALSE)+
   scale_fill_manual(values=c("#BF616A","#81A1C1"))+
   scale_color_manual(values=c("#BF616A","#81A1C1"))+
@@ -449,7 +521,7 @@ p<-ggplot(data=df,
               width=0.05,
               height=0,
               size=2,
-              alpha = 0.5)+
+              alpha = 0.9)+
   #geom_quasirandom(aes(color=CNIH4level),dodge.width=.8)+
   #scale_color_manual(values=c("#BF616A","#81A1C1"))+
   
@@ -468,13 +540,122 @@ p<-ggplot(data=df,
                       size = 5,
                       label.x = 1.3,
                       label.y = 1.3)
-
+library(bbplot)
 png(file=paste0(path_output,"/Figure4C_differential_coexpression_boxplot.png"),res=900, units = 'in', width=8, height = 7)
 p
 dev.off()
 ```
 
 ### Boxplot
+
+```{r}
+data_long <- gather(impute_df, condition, measurement, B.cells.naive:Neutrophils, factor_key=TRUE)
+
+p<-ggplot(data=data_long,
+          aes(x=condition,y=measurement))+
+  geom_boxplot(aes(color=condition)) +
+  geom_jitter(height=0,aes(color=condition),alpha=0.1) + 
+  theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+
+data_long <- merge(impute_df,lowCNIH4vsIC_df,by=0)
+data_long <- gather(data_long, condition, measurement, B.cells.naive:Neutrophils, factor_key=TRUE)
+
+p<-ggplot(data=data_long,
+          aes(x=condition,y=measurement))+
+  geom_boxplot(aes(color=condition)) +
+  geom_jitter(height=0,aes(color=condition),alpha=0.1) + 
+  theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+data_long <- merge(impute_df,highCNIH4vsIC_df,by=0)
+data_long <- gather(data_long, condition, measurement, B.cells.naive:Neutrophils, factor_key=TRUE)
+
+p<-ggplot(data=data_long,
+          aes(x=condition,y=measurement))+
+  geom_boxplot(aes(color=condition)) +
+  geom_jitter(height=0,aes(color=condition),alpha=0.1) + 
+  theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p
+```
+
+```{r}
+library(ggpubr)
+require(plyr)
+
+tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/CIBERSORTxHiRes_NA_Neutrophils_Window20.txt'),sep='\t')
+rownames(tmp0) <- tmp0$GeneSymbol
+tmp0$GeneSymbol <- NULL
+tmp0 <- t(tmp0) %>% as.data.frame() %>% dplyr::rename(Neutrophils = CNIH4)
+
+lowCNIH4_neutrophils <- merge(lowCNIH4vsIC_df,tmp0,by=0)
+highCNIH4_neutrophils <- merge(highCNIH4vsIC_df,tmp0,by=0)
+
+# Ugly
+p <- ggplot() +
+  # Top
+  geom_density(data=highCNIH4_neutrophils, 
+               aes(x = Neutrophils, y = ..density..), fill="#69b3a2" ) +
+  geom_label( aes(x=4.5, y=0.25, label="variable1"), color="#69b3a2") +
+  # Bottom
+  geom_density(data=lowCNIH4_neutrophils,
+               aes(x = Neutrophils, y = -..density..), fill= "#404080") +
+  geom_label( aes(x=4.5, y=-0.25, label="variable2"), color="#404080") + 
+  theme_bw()+
+  xlab("value of x")
+
+
+
+CNIH4lv_neutrophils <- merge(vst_data2,tmp0,by=0)[,c('Neutrophils','level')]
+
+CNIH4lv_neutrophils$level <- mapvalues(CNIH4lv_neutrophils$level, 
+                                        from=c('LOW',"HIGH"), 
+                                        to=c("Low CNIH4","High CNIH4"))
+
+
+p<-ggplot(data=CNIH4lv_neutrophils,
+       aes(x=reorder(level, Neutrophils,na.rm = TRUE),
+           y=Neutrophils)) +
+  theme_bw() +
+  geom_violin(aes(color=level,fill=level),
+              width=0.5,alpha=0.2,
+              trim=FALSE)+
+  scale_fill_manual(values=c("#BF616A","#81A1C1"))+
+  scale_color_manual(values=c("#BF616A","#81A1C1"))+
+  geom_boxplot(aes(color=level),
+               size=1,
+               position=position_dodge(1),
+               width=0.01,
+               outlier.colour="red",
+               outlier.shape=NA,outlier.size=3)+
+    geom_jitter(aes(color=level,fill=level),
+              width=0.05,
+              height=0,
+              size=2,
+              alpha = 0.5)+
+  #geom_quasirandom(aes(color=CNIH4level),dodge.width=.8)+
+  #scale_color_manual(values=c("#BF616A","#81A1C1"))+
+  
+  labs(x="",y = "Neutrophils", title = "")+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "none",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))+
+  stat_compare_means( #aes(label = paste0("p = ", ..p.format..)),
+                      size = 5,
+                      label.x = 1.3,
+                      label.y = 230)
+
+png(file=paste0(path_output,"/Figure_NeutrophilsInHighvsLowCNIH4.png"),res=900, units = 'in', width=8, height = 7)
+p
+dev.off()
+```
 
 ```{r}
 
@@ -493,8 +674,8 @@ for(i in 1:length(n)){
   
   df0 <-  merge(df, tmp0, by=0)
   print(dim(df0))
-  #df[n[i]]<-df0$CNIH4
-  df[n[i]]<-df0$CD274
+  df[n[i]]<-df0$CNIH4
+  #df[n[i]]<-df0$CD274
 }
 df <- df[,3:length(df)]
 
