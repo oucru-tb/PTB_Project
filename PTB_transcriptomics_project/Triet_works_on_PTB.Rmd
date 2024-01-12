@@ -60,9 +60,236 @@ load(file=paste0(path_input,"Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
 load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
 ```
 
+## Split hurdle plot TBM and PTB
+
+```{r}
+library(brms)
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+library(tidybayes)
+library(broom)
+library(dplyr)
+library(ggplot2)
+library(broom.mixed)
+options(mc.cores = 1, brms.backend = "cmdstanr")
+
+CHAINS <- 4
+ITER <- 2000
+WARMUP <- 1000
+BAYES_SEED <- 1234
+
+# Create a custom family that is logit if y = 0, normal/gaussian if not
+hurdle_gaussian <- custom_family("hurdle_gaussian", 
+                dpars = c("mu", "sigma", "hu"),
+                links = c("identity", "log", "logit"),
+                lb = c(NA, 0, NA),
+                type = "real")
+
+# Stan code
+stan_funs <- "
+  real hurdle_gaussian_lpdf(real y, real mu, real sigma, real hu) { 
+    if (y == 0) { 
+      return bernoulli_lpmf(1 | hu); 
+    } else { 
+      return bernoulli_lpmf(0 | hu) +  
+             normal_lpdf(y | mu, sigma); 
+    } 
+  }
+"
+# Prepare Stan code for use in brm()
+stanvars <- stanvar(scode = stan_funs, block = "functions")
+```
+
+```{r}
+dim(Data_26_27_CT)# 254,  15
+
+model_hurdle <- brm(bf(bacterial_load_1 ~ CNIH4,
+                       hu ~ CNIH4),
+                    data = Data_26_27_CT,
+                    family = hurdle_gaussian,  # <--- This is new
+                    stanvars = stanvars,   # <--- This is new
+                    chains = CHAINS, 
+                    iter = ITER, 
+                    warmup = WARMUP, 
+                    seed = BAYES_SEED,
+                    silent = 1
+)
+
+tidy(model_hurdle)
+pp_check(model_hurdle, ndraws = 500)
+c <- cbind.data.frame(data.frame(tidy(model_hurdle))[1:4,4:8],p.value=p_value(model_hurdle)[,2])
+colnames(c)<-c("Parameter","Estimate","std.error","conf.low","conf.high","p_value")
+
+
+summary(Data_26_27_CT$CNIH4)
+newdata=data.frame(CNIH4=seq(8.753,11.771,len=50))
+pred<-fitted(model_hurdle, newdata = newdata)
+d<-cbind(newdata,pred)
+d<-d %>% mutate(CT_pred=40/2^(Estimate),
+            lower_pred=40/2^(Q2.5),
+            upper_pred=40/2^(Q97.5))
+
+p<-ggplot(data=d,aes(x=CNIH4,y=CT_pred))+
+  geom_line(size=2,col="#313695")+
+  geom_ribbon(aes(ymin=lower_pred,ymax=upper_pred,x=CNIH4),alpha=0.4,fill="#313695")+scale_y_continuous(trans = log2_trans(),
+    breaks = log2(seq(10,40,by=5)),
+    labels = seq(10,40,by=5))+
+  geom_jitter(data=Data_26_27_CT,aes(x = CNIH4, y = NAT), size=2.5,alpha=0.5)+
+  theme_bw()+
+  labs(x = paste("CNIH4"," expression level [log2 counts] "), y = "Mtb Xpert Ct value")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15))+
+  scale_y_continuous(trans = log2_trans(),
+    breaks = log2(seq(10,40,by=5)),
+    labels = seq(10,40,by=5))
+
+png(file=paste0(path_output,"/TBM_CNIH4.png"),res=450, units = 'in', width =10, height =10)
+p
+dev.off()
+```
+
 ## PTB
 
+```{r}
+
+dim(Data_26_27_CT)# 254,  15
+
+model_hurdle <- brm(bf(bacterial_load_1 ~ CNIH4,
+                       hu ~ CNIH4),
+                    data = Data_26_27_CT,
+                    family = hurdle_gaussian,  # <--- This is new
+                    stanvars = stanvars,   # <--- This is new
+                    chains = CHAINS, 
+                    iter = ITER, 
+                    warmup = WARMUP, 
+                    seed = BAYES_SEED,
+                    silent = 1
+)
+
+tidy(model_hurdle)
+pp_check(model_hurdle, ndraws = 500)
+c <- cbind.data.frame(data.frame(tidy(model_hurdle))[1:4,4:8],p.value=p_value(model_hurdle)[,2])
+colnames(c)<-c("Parameter","Estimate","std.error","conf.low","conf.high","p_value")
+
+
+summary(Data_26_27_CT$CNIH4)
+newdata=data.frame(CNIH4=seq(8.753,11.771,len=50))
+pred<-fitted(model_hurdle, newdata = newdata)
+d<-cbind(newdata,pred)
+d<-d %>% mutate(CT_pred=40/2^(Estimate),
+            lower_pred=40/2^(Q2.5),
+            upper_pred=40/2^(Q97.5))
+
+p<-ggplot(data=d,aes(x=CNIH4,y=CT_pred))+
+  geom_line(size=2,col="#313695")+
+  geom_ribbon(aes(ymin=lower_pred,ymax=upper_pred,x=CNIH4),alpha=0.4,fill="#313695")+scale_y_continuous(trans = log2_trans(),
+    breaks = log2(seq(10,40,by=5)),
+    labels = seq(10,40,by=5))+
+  geom_jitter(data=Data_26_27_CT,aes(x = CNIH4, y = NAT), size=2.5,alpha=0.5)+
+  theme_bw()+
+  labs(x = paste("CNIH4"," expression level [log2 counts] "), y = "Mtb Xpert Ct value")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15))+scale_y_continuous(trans = log2_trans(),
+    breaks = log2(seq(10,40,by=5)),
+    labels = seq(10,40,by=5))
+p
+```
+
+```{r}
+load(file=paste0(path_input,"Raw_data/Data_26_27_CT_CNIH4.Rdata.RData")) #TBM
+Data_26_27_CT %>% ggplot(aes(x=CNIH4 ,y=Xpert_mean))+
+  geom_point(size=2.5,alpha=0.5)+
+  geom_smooth(method = "gam",formula = y ~ s(x),se = TRUE,size=2,col="#313695",fill="#313695")+
+  theme_bw()+
+  labs(x = paste("CNIH4"," expression level [log2 counts] "), y = "Mtb Xpert Ct value")+ 
+  theme(panel.grid.minor = element_blank(),
+        axis.title.x = element_text(face="bold", colour="black", size=20),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15)) +xlim(8,13)+ylim(0,40)
+
+
++scale_y_continuous(trans = log2_trans())
+  scale_y_continuous(trans = log2_trans(),
+    breaks = log2(seq(10,40,by=5)),
+    labels = seq(10,40,by=5))->p
+p
+```
+
+```{r}
+load(file=paste0(path_input,"Data/Most_variance_RNA_genes.Rdata"))
+load(file=paste0(path_input,"Raw_data/Data_26_27_CT_CNIH4.Rdata.RData")) #TBM
+load(file=paste0(path_input,"Raw_data/d2_long.Rdata")) #PTB
+
+d2_long %>% filter(gene_names=="CNIH4") %>% ggplot(aes(x=concentration ,y=log2_CT))+
+  geom_point(size=2.5,alpha=0.5)+
+  geom_smooth(method = "gam",formula = y ~ s(x),se = TRUE,size=2,col="#313695",fill="#313695")+
+  theme_bw()+
+  labs(x = paste("CNIH4"," expression level [log2 counts] "), y = "Mtb Xpert Ct value")+ 
+  theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15))+
+  scale_y_continuous(trans = log2_trans(),
+    breaks = log2(seq(10,40,by=5)),
+    labels = seq(10,40,by=5))->p
+png(file=paste0(path_output,"/TBM_CNIH4.png"),res=450, units = 'in', width =10, height =10)
+p
+dev.off()
+```
+
 ### 1. Correlation heatmap CNIH4 vs 25 ICs
+
+```{r}
+tmp <- vst_data %>% select(c('CNIH4','CD58','CD2','CD274','PDCD1','CMTM6'))
+tmp_mat <- cor(tmp,
+               use='pairwise.complete.obs',
+               method = cor_method)
+
+p.tmp_mat <- cor.pval.test(tmp, 
+                           tmp, 
+                           method=cor_method, 
+                           use='pairwise.complete.obs')
+
+mat1 <- tmp_mat
+p.mat1 <- p.tmp_mat
+labels1 <-round(mat1,2)
+vals1 <- labels1
+vals1[p.mat1 > 0.05] <- 0
+labels1[p.mat1 > 0.05] <- ''
+
+myBreaks <- c(seq(-1, 0, length.out=ceiling(1000/2) + 1),
+              seq(1/1000, 1, length.out=floor(1000/2)))
+
+pheatmap(vals1,
+               color = colorRampPalette(col)(1000),
+               breaks=myBreaks,
+               display_numbers=labels1,
+               show_colnames = T,legend = F)
+```
 
 ```{r}
 library(pheatmap)
@@ -88,8 +315,9 @@ cor.pval.test <- function(x1, x2, ...) {
 IC_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
              'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
              'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
-             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9','CNIH4','NEUTLE','HGB',
-             'WBC','LYMLE','MONOLE','EOSLE')
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9','CNIH4',
+            
+            'NEUTLE','HGB','WBC','LYMLE','MONOLE','EOSLE')
 
 ICvsCNIH4_df <- vst_data %>% select(IC_names)
 ICvsCNIH4_df <- merge(ICvsCNIH4_df, impute_df, by=0) %>% tibble::column_to_rownames('Row.names') %>% select("CD200" : "Neutrophils" )
@@ -143,9 +371,7 @@ myBreaks <- c(seq(-1, 0, length.out=ceiling(1000/2) + 1),
               seq(1/1000, 1, length.out=floor(1000/2)))
 
 p01 <- pheatmap(vals1,
-               #color = colorRampPalette(col)(1000),
-               
-               color=colorRampPalette(natparks.pals("DeathValley"))(1000),
+               color = colorRampPalette(col)(1000),
                breaks=myBreaks,
                display_numbers=labels1,
                show_colnames = T,legend = F)
@@ -290,7 +516,7 @@ PTB_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,trial_
 
 tmp <- PTB_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
 rownames(tmp) <- PTB_df$LIMS_ID
-table(tmp$level) # 244:52
+table(tmp$level) # 244 52
 vst_data2<-merge(vst_data,tmp[,2, drop=FALSE],by=0)
 rownames(vst_data2) <- vst_data2$LIMS_ID
 dim(vst_data2) # 295 31427
@@ -592,7 +818,61 @@ p
 dev.off()
 ```
 
-### Boxplot
+### 4.0. PTB vs Health
+
+```{r}
+library(ggpubr)
+library(rstatix)
+
+healthy_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,trial_number=='HV'|trial_number=='43TB')$LIMS_ID)
+rownames(healthy_df) <- healthy_df$LIMS_ID
+
+PTB_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,trial_number=='MDR_PTB'|trial_number=='DS_PTB')$LIMS_ID)
+rownames(PTB_df) <- PTB_df$LIMS_ID
+
+tmp1 <- merge(impute_df,healthy_df,by=0) %>% select(B.cells.naive:Neutrophils)
+dim(tmp1)
+tmp1 <- pivot_longer(tmp1,B.cells.naive:Neutrophils)
+tmp1$group <- rep('Healthy',each=dim(tmp1)[1])
+
+tmp2 <- merge(impute_df,PTB_df,by=0) %>% select(B.cells.naive:Neutrophils)
+dim(tmp2)
+tmp2 <- pivot_longer(tmp2,B.cells.naive:Neutrophils)
+tmp2$group <- rep('PTB',each=dim(tmp2)[1])
+
+tmp<-rbind(tmp1,tmp2)
+
+p <- ggplot(data=tmp,
+       aes(x=name,y=value, color=factor(group, level = c('Healthy','PTB'))))+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),
+             alpha=0.1)+
+  scale_color_manual(values=c("#81A1C1","#B48EAD"))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('% Cell population')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))
+stat.test <- tmp %>%
+  group_by(name) %>% 
+  t_test(value ~ group) %>%
+  add_xy_position(x = "name")
+p<- p + stat_pvalue_manual(stat.test, label = 'p', tip.length = 0)
+png(file=paste0(path_output,"/Figure_CellPop_HealthyvsPTB.png"),res=900, units = 'in', width=14, height = 9)
+p
+dev.off()
+```
+
+### 4. Boxplot for cell population, compare in low vs high CNIH4 groups
 
 ```{r}
 tmp <- merge(impute_df,vst_data2,by=0) %>% select(c(B.cells.naive:Neutrophils,level))
@@ -640,18 +920,21 @@ p <- ggplot(data=tmp,
         axis.text.y=element_text(color="black",size=20),
         axis.title.y = element_text(size = 20,color="black",face="bold"),
         axis.title= element_text(size = 40,color="black",face="bold"))
-p 
-  
+
 png(file=paste0(path_output,"/Figure_CellPop_LowvsHighCNIH4.png"),res=900, units = 'in', width=14, height = 9)
 p
 dev.off()
 ```
 
+### 5. Box plot of CNIH4 and PDL1 expression in Neutrophils in high and low CNIH4 groups
+
 ```{r}
 library(ggpubr)
 require(plyr)
 library(ggbeeswarm)
-tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/CIBERSORTxHiRes_NA_Neutrophils_Window20.txt'),sep='\t')
+
+
+tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/ICs/CIBERSORTxHiRes_NA_Monocytes_Window40.txt'),sep='\t')
 rownames(tmp0) <- tmp0$GeneSymbol
 tmp0$GeneSymbol <- NULL
 tmp0 <- t(tmp0) %>% as.data.frame() %>% dplyr::rename(CNIH4InNeutrophils = CNIH4)
@@ -694,41 +977,10 @@ p<-ggplot(data=CNIH4lv_neutrophils,
                       size = 5,
                       label.x = 1.3,
                       label.y = 220)
-p
-png(file=paste0(path_output,"/Figure_HighvsLowCNIH4InNeutrophils_CNIH4.png"),res=900, units = 'in', width=5, height = 7)
-p
-dev.off()
-```
 
-```{r}
-# 
-# library(comprehenr)
-# library(stringr)
-# 
-# n <- list.files(paste0(path_input,"Raw_data/LM22_ref_CNIH4"))
-# n <- to_vec(for(i in 1:length(n)) if(grepl('Hi',  n[i])) n[i])
-# df <- ICvsCNIH4_df[,1:2]
-#   
-# for(i in 1:length(n)){
-#   tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/',n[i]),sep='\t')
-#   rownames(tmp0) <- tmp0$GeneSymbol
-#   tmp0$GeneSymbol <- NULL
-#   tmp0 <- t(tmp0)
-#   
-#   df0 <-  merge(df, tmp0, by=0)
-#   print(dim(df0))
-#   df[n[i]]<-df0$CNIH4
-#   #df[n[i]]<-df0$CD274
-# }
-# df <- df[,3:length(df)]
-# 
-# data_long <- gather(df, condition, measurement, CIBERSORTxHiRes_NA_Bcells_Window20.txt:CIBERSORTxHiRes_NA_TcellsCD8_Window20.txt, factor_key=TRUE)
-# 
-# ggplot(data=data_long,
-#           aes(x=condition,y=measurement))+
-#   geom_boxplot(aes(color=condition)) +
-#   geom_jitter(height=0,aes(color=condition),alpha=0.1) + 
-#   theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#png(file=paste0(path_output,"/Figure_HighvsLowCNIH4InNeutrophils_CNIH4.png"),res=900, units = 'in', width=5, height = 7)
+p
+#dev.off()
 ```
 
 ## TBM
@@ -736,15 +988,11 @@ dev.off()
 ### 1. Correlation heatmap CNIH4 vs 25 ICs
 
 ```{r}
+library(pheatmap)
+TBM_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,(Timepoint=='D0') & (trial_number=='26TB'|trial_number=='27TB'))$LIMS_ID)
 dim(TBM_df)
-filter(count_data_adjusted_ComBat,trial_number=='26TB')
-```
 
-```{r}
-TBM_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,trial_number=='26TB'|trial_number=='27TB')$LIMS_ID)
-
-
-rownames(TBM_df) <- TBM_df$LIMS_ID
+rownames(TBM_df) <- TBM_df$LIMS_ID 
 IC_names<-c('CD200', 'TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
              'CD28','BTLA', 'CD27', 
             #'HAVCR2', 'TNFRSF14',
@@ -781,9 +1029,9 @@ p.ICvsCNIH4_mat <- cor.pval.test(ICvsCNIH4_df,
                                   method=cor_method, 
                                   use='pairwise.complete.obs')
 
-#col=c("#001164", 'white', "#FF681E")
+col=c("#001164", 'white', "#FF681E")
 #col=c("#5E81AC", '#EBCB8B', "#BF616A")
-col=c("#395b85", 'white', "#FF681E")
+#col=c("#395b85", 'white', "#FF681E")
 
 draw_colnames_45 <- function (coln, gaps, ...) {
     coord <- pheatmap:::find_coordinates(length(coln), gaps)
@@ -829,22 +1077,22 @@ healthy_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,
 
 qt<-quantile(healthy_df$CNIH4,c(0.75)) #Q3 CNIH4 of healthy control
 
-tmp <- TBM_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
+tmp <- TBM_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))# High CNIH4 expression if greater then Q3 of CNIH4 expression in healthy patients
 rownames(tmp) <- TBM_df$LIMS_ID
-table(tmp$level) # 562  135
-TBM_df<-merge(TBM_df,tmp[,2, drop=FALSE],by=0)
-rownames(TBM_df) <- TBM_df$LIMS_ID
-dim(TBM_df) # 295 31427
+table(tmp$level) # 241   40 
+vst_data2<-merge(TBM_df,tmp[,2, drop=FALSE],by=0)
+rownames(vst_data2) <- vst_data2$LIMS_ID
+dim(vst_data2) # 281 20007
+
 ```
 
 ```{r}
-lowCNIH4vsIC_df <- TBM_df %>% select(append(IC_names[1:24],'level')) %>% filter(level=='LOW') %>% select(-level)
-highCNIH4vsIC_df <- TBM_df %>% select(append(IC_names[1:24],'level')) %>% filter(level=='HIGH') %>% select(-level)
+lowCNIH4vsIC_df <- vst_data2 %>% select(append(IC_names[1:24],'level')) %>% filter(level=='LOW') %>% select(-level)
+highCNIH4vsIC_df <- vst_data2 %>% select(append(IC_names[1:24],'level')) %>% filter(level=='HIGH') %>% select(-level)
 ```
 
 ```{r}
 library(dcanr)
-
 cor_method = 'spearman'
 ICvslowCNIH4_mat <- cor(lowCNIH4vsIC_df,
                       use='pairwise.complete.obs',
@@ -864,9 +1112,9 @@ p.ICvshighCNIH4_mat <- cor.pval.test(highCNIH4vsIC_df,
                                   method=cor_method, 
                                   use='pairwise.complete.obs')
 
-emat <- t(TBM_df%>%select(IC_names[1:24])) #tranpose
-condition <- TBM_df$level # high and low
-scores <- dcScore(emat, 
+emat <- t(vst_data2%>%select(IC_names[1:24])) #tranpose, 23+1
+condition <- vst_data2$level # high and low
+scores <- dcScore(emat,
                   condition,
                   dc.method = "zscore",
                   cor.method = 'spearman')
@@ -875,44 +1123,60 @@ adj_p <- dcAdjust(raw_p, f = p.adjust, method = 'fdr')
 ```
 
 ```{r}
+library(NatParksPalettes)
+library(cowplot)
+library(grid)
+
 col1 =c("#395b85", 'white', "#FF681E")
 col2 = c("#00b8ff","black","magenta")
 
-p1<-ggcorrplot(ICvslowCNIH4_mat,
-           p.mat = p.ICvslowCNIH4_mat, 
-           colors = col1,
-           lab = F, 
-           show.legend = F,
-           lab_size = 2,
-           insig="blank",
-           outline.color = 'black',)+
-  theme(legend.position="")+
-  labs(fill="Corr")+
-  theme(axis.text.x = element_text(face="bold", colour="black", size=12),
-        axis.text.y = element_text(face="bold", colour="black", size=12),
-        legend.text = element_text(size = 15),
-        legend.title = element_text( colour="black", size=12))
+highlow_mat <- ICvshighCNIH4_mat
+highlow_mat[upper.tri(ICvshighCNIH4_mat,diag=F)] <- ICvslowCNIH4_mat[upper.tri(ICvslowCNIH4_mat,diag=F)]
+p.highlow_mat <- p.ICvshighCNIH4_mat
+p.highlow_mat[upper.tri(p.ICvshighCNIH4_mat,diag=F)] <- p.ICvslowCNIH4_mat[upper.tri(p.ICvslowCNIH4_mat,diag=F)]
 
-p2<-ggcorrplot(ICvshighCNIH4_mat,
-           p.mat = p.ICvshighCNIH4_mat, 
+p12<-ggcorrplot(highlow_mat[,24:1],
+           p.mat = p.highlow_mat[,24:1], 
            colors = col1,
            lab = F,
            lab_size = 2,
            insig="blank",
-           outline.color = 'black')+theme(legend.position="right")+
+           outline.color = 'black')+
+  theme(legend.position="right")+
   labs(fill="Corr")+
   theme(axis.text.x = element_text(face="bold", colour="black", size=12),
-        axis.text.y = element_text(face="bold", colour="white", size=6),
+        axis.text.y = element_text(face="bold", colour="black", size=12),
         legend.text = element_text(size = 15),
         legend.title = element_text( colour="black", size=12))+
   guides(fill = guide_colourbar(title = "Corr",
                                 size=15,
-                                barheight = 40))
+                                barheight = 40)) + 
+  scale_fill_gradientn(colors=natparks.pals("Acadia"),limit = c(-1,1)) + 
+  annotate('segment', 
+               x = 24.5, 
+               xend = 0.5, 
+               y = 0.5, 
+               yend = 24.5, color = 'black', size = 0.25)
 
-p3 <- ggcorrplot(scores,
-           p.mat = raw_p, 
+tmp <- highlow_mat
+tmp[is.na(raw_p)] <- NA
+tmp[raw_p >= 0.05] <- NA
+tmp<-which(!is.na(tmp[24:1,]), arr.ind=T)
+
+for(row in 1:nrow(tmp)) {
+  i = tmp[row,]
+  p12 <- p12 + annotate('rect', 
+               xmin = i[2]-0.5, 
+               xmax = i[2]+0.5, 
+               ymin = i[1]-0.5, 
+               ymax = i[1]+0.5,
+           fill = NA, color = 'black', size = 0.5)
+}
+
+p3 <- ggcorrplot(scores[,24:1],
+           p.mat = raw_p[,24:1], 
            colors = col2,
-           show.diag = FALSE,
+           show.diag = TRUE,
            lab = F, 
            lab_size = 2,
            insig="blank",ggtheme =ggplot2::theme_void,
@@ -935,9 +1199,34 @@ p3 <- ggcorrplot(scores,
   guides(fill = guide_colourbar(title = "Differential Z-scores",
                                 title.position = "right",size=15,
                                 barheight = 40))
-# library(cowplot)
-# 
-png(file=paste0(path_output,"/Figure4C_differential_coexpression_heatmap2.png"),res=600, units = 'in', width=30, height =10)
-plot_grid(p1, p2, p3, align = "h", ncol = 3, rel_widths = c(1/3.19, 1/3, 1/3))
+
+png(file=paste0(path_output,"/Figure4C_differential_coexpression_heatmap_TBM.png"),res=600, units = 'in', width=20, height =10)
+plot_grid(p12,p3, align = "h", ncol = 2, rel_widths = c(1/5, 1/5))
 dev.off()
+```
+
+```{r}
+#CNIH$ vs CTvalue
+library(ggplot2)
+library(ggpmisc)
+library(ggpubr)
+ggplot(data=vst_data%>%select(c('CNIH4','CT_mean')), aes_string(x='CNIH4',y='CT_mean'))+
+  geom_point(alpha=0.2,col='red')+
+  theme_bw()+
+  stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7,method = 'spearman')+
+  theme_bw()+ 
+  ylab(" expression")+
+  xlab("CNIH4 expression")+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
 ```

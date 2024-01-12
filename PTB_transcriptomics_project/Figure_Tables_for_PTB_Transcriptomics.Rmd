@@ -1,0 +1,598 @@
+---
+title: "Figure_Tables_for_PTB_Transcriptomics"
+author: "Nhat Le and Triet Nguyen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(parallel)
+mcore<-12
+# mcore<-1# for Window PC
+#Load libraries
+library(dplyr)
+library(readxl)
+library(writexl)
+library(survival)
+library(glmnet)
+library(stabs)
+library(tidyverse)
+library(magrittr)
+library(Hmisc)
+library(gtsummary)
+library(WGCNA)
+library(ggcorrplot)
+library(scales)
+library(gridExtra)
+library(ggcorrplot)
+library(broom)
+library(rms)
+library(tidyverse)
+library("stabs")
+library("mboost")
+library(DESeq2)
+library(ggdendro)
+
+###--- Set Directory ---###
+local_dir<-getwd()
+setwd(local_dir)
+###------Import clinical and clean RNAseq and PCR data------###
+load(file="Data/Most_variance_RNA_genes.Rdata")
+load(file="Data/Fluidigm_PTB_data.Rdata")
+# Output Link
+path_output<-"Results"
+path_output_1<-"Results/Derive_results"
+path_output_2<-"Results/Figures_Tables"
+```
+
+
+
+## Patient characteristics PTB patients
+
+```{r Table 1, echo=FALSE}
+table <- clinical_2 %>% select("Age","Gender","bmi","Treatment_sensitive","TB_History","Symptom_duration","Diabetes",
+                             "cohort","CT_Xpert_mean","HGB","WBC","Neutrophil_counts","Lymphocyte_counts","Monocyte_counts","Eosinophil_counts",
+                              "Timika_score","Cavity","Lung_proportion") %>% 
+  tbl_summary(
+    by = cohort, # split table by group
+    missing = "ifany", # don't list missing data separately,
+    label = list( Age~"Age [year]",
+                  bmi~"BMI [kg/m2]",
+                  TB_History~"TB History",
+                  Symptom_duration~"Symptom duration (days)",
+                  Diabetes~"Diabetes Metilus",
+                  CT_Xpert_mean~"GeneXpert mean Ct value",
+                  HGB~ "Hemoglobin (g/dl)", ## HGB
+                  WBC~"Total white blood cell counts (G/L)",
+                  Neutrophil_counts~"Neutrophil count (G/L)",
+                  Lymphocyte_counts~"Lymphocyte count (G/L)",
+                  Monocyte_counts~"Monocyte count (G/L)",
+                  Eosinophil_counts~"Eosinophil count (G/L)",
+                  Timika_score~"Chest X-ray Timika score",
+                  Cavity~"Chest Xray Cavity",
+                  Lung_proportion~"Lung proportion damage (%)"
+                )
+  ) %>%
+  add_n() %>% # add column with total number of non-missing observations
+  add_p() %>% # test for a difference between groups
+  modify_header(label = "**Variable**") %>% # update the column header
+  bold_labels()
+table
+
+```
+
+```{r Table S1, echo=FALSE}
+splitting_set_size <- 0.5
+set.seed(1234) #4650
+n<-nrow(clinical_RNA_PTB)
+index_set_1 <- sample (1:n, floor(splitting_set_size * nrow(clinical_RNA_PTB)), replace=F)
+index_set_2<-(1:n)[!(1:n%in%index_set_1)]
+clinical_tmp<-clinical_RNA_PTB %>% select("Age","Gender","bmi","Treatment_sensitive","TB_History","Symptom_duration","Diabetes",
+                             "CT_Xpert_mean","HGB","WBC","Neutrophil_counts","Lymphocyte_counts","Monocyte_counts","Eosinophil_counts",
+                              "Timika_score","Cavity","Lung_proportion")
+set_1_set  <- clinical_tmp[index_set_1,] 
+set_2_set  <- clinical_tmp[index_set_2,]
+
+# Overview patient characteristics to see if the characteristics are distributed equally
+set_1_set$Set <- 'Train set'
+set_2_set$Set <- 'Test set'
+
+PTB_sets <- rbind(set_1_set, set_2_set) %>% 
+  mutate(Set=factor(Set,levels=c('Train set','Test set')))
+
+table <- PTB_sets %>% 
+  tbl_summary(
+    by = Set, # split table by group
+    missing = "ifany", # don't list missing data separately,
+    label = list( Age~"Age [year]",
+                  bmi~"BMI [kg/m2]",
+                  TB_History~"TB History",
+                  Symptom_duration~"Symptom duration (days)",
+                  Diabetes~"Diabetes Metilus",
+                  CT_Xpert_mean~"GeneXpert mean Ct value",
+                  HGB~ "Hemoglobin (g/dl)", ## HGB
+                  WBC~"Total white blood cell counts (G/L)",
+                  Neutrophil_counts~"Neutrophil count (G/L)",
+                  Lymphocyte_counts~"Lymphocyte count (G/L)",
+                  Monocyte_counts~"Monocyte count (G/L)",
+                  Eosinophil_counts~"Eosinophil count (G/L)",
+                  Timika_score~"Chest X-ray Timika score",
+                  Cavity~"Chest Xray Cavity",
+                  Lung_proportion~"Lung proportion damage (%)"
+                )
+  ) %>%
+  add_n() %>% # add column with total number of non-missing observations
+  add_p() %>% # test for a difference between groups
+  modify_header(label = "**Variable**") %>% # update the column header
+  bold_labels()
+table
+```
+
+
+```{r echo=FALSE}
+clinical_RNA%<>% as.data.frame() %>% mutate(log2_CT=log2(CT_mean))
+datExpr0<-datExpr<-RNA_data %>% select(-LIMS_ID)
+gene_names_full<-colnames(datExpr)
+library(betareg)
+#squeeze data that lies in [0,1] to be in (0,1) 
+# https://stats.stackexchange.com/questions/31300/dealing-with-0-1-values-in-a-beta-regression
+N<-length(clinical$Lung_proportion)-sum(is.na(clinical$Lung_proportion))
+clinical$Lung_proportion_scaled<-(clinical$Lung_proportion/100*(N - 1) + 0.5)/N 
+fit<- betareg(Lung_proportion_scaled ~ Treatment_sensitive
+,
+                     data = clinical)
+fit<- betareg(Lung_proportion_scaled ~ Treatment_sensitive*TB_History,
+                     data = clinical)
+```
+
+## Network construction
+
+### Scale free model fitting for network analysis
+
+```{r Figure S1_A_B}
+library(latex2exp)
+# Choose a set of soft-thresholding powers
+powers = c(1:20);
+# Call the network topology analysis function
+# sft = pickSoftThreshold(multiExpr[[1]]$data, powerVector = powers, verbose = 5,
+#                         blockSize=10000,RsquaredCut = 0.85)
+# save(sft,file="Data/sft_Pearson.Rdata")
+
+load(file="Data/sft_Pearson.Rdata")
+plotData<-data.frame(soft_thresholding_power=sft$fitIndices[,1],fitIndices=-sign(sft$fitIndices[,3])*sft$fitIndices[,2],median_connectivity=sft$fitIndices[,6])
+
+png(file =  paste0(path_output_2,"/Figure_S1A_S1B_Network_topology_vs_soft_thresholding_powers_on_discovery_set.png"), wi = 10, 
+     he = 5, units = "in",res=480)
+
+# Scale-free topology fit index as a function of the soft-thresholding power
+
+p1<-ggplot(data=plotData,aes(x=soft_thresholding_power,y=fitIndices))+geom_text(aes(label=soft_thresholding_power))+xlab("Soft Threshold (power)")+ylab(TeX("Scale Free Topology Model Fit, signed  $\\R^2$"))+
+    theme_bw()+scale_y_continuous(breaks=c(-0.5,0,0.5,0.9,1))+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Scale independence")+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))+geom_hline(yintercept =c(0.9),linetype="dashed",col=c("red"))
+
+p2<-ggplot(data=plotData,aes(x=soft_thresholding_power,y=median_connectivity))+geom_text(aes(label=soft_thresholding_power))+xlab("Soft Threshold (power)")+ylab("Median Connectivity")+scale_y_continuous(breaks=c(0,100,500,1000,1500))+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Median Connectivity")+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))+geom_hline(yintercept =c(100),linetype="dashed",col=c("red"))
+cowplot::plot_grid(p1,p2, nrow = 1)
+dev.off()
+
+sft$fitIndices[,5][8:15]
+
+# estimated power = 5 corresponds to R2>0.9 and median.k.>100
+```
+
+### Plot the gene denogram with detected  module 
+
+```{r Figure S1_C_D, include=FALSE}
+load(file="Data/network_construction_PTB.RData")
+# open a graphics window
+sizeGrWindow(12, 9)
+# Convert labels to colors for plotting
+mergedColors = labels2colors(net$colors)
+# Plot the dendrogram and the module colors underneath
+png(file=paste0(path_output_2,"/Figure_S1C_gene_dendogram_vs_merged_module.png"),wi = 10, 
+     he = 5, units = "in",res=480)
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+dev.off()
+
+t <- as.vector(table(moduleColors))
+png(file = paste0(path_output_2,"/Figure_S1D_ModuleGenenumber.png"), wi = 9.5, 
+     he = 5, units = "in",res=350)
+barplot(t, names.arg = names(table(moduleColors)), col = names(table(moduleColors)), 
+        ylab = "Number of genes", main = "Genes in Module")
+dev.off()
+```
+
+
+### Perservation analysis
+
+```{r Figure S2: Visualize of module preservation plot}
+load(file = "Data/PTB-modulePreservation_2.RData")
+discovery = 1
+validation = 2
+statsObs = cbind(mp$quality$observed[[discovery]][[validation]][, -1], mp$preservation$observed[[discovery]][[validation]][, -1])
+statsZ = cbind(mp$quality$Z[[discovery]][[validation]][, -1], mp$preservation$Z[[discovery]][[validation]][, -1]);
+
+# Compare preservation to quality:
+print( cbind(statsObs[, c("medianRank.pres", "medianRank.qual")],
+             signif(statsZ[, c("Zsummary.pres", "Zsummary.qual")], 2)) )
+
+# Module labels and module sizes are also contained in the results
+modColors = rownames(mp$preservation$observed[[discovery]][[validation]])
+moduleSizes = mp$preservation$Z[[discovery]][[validation]][, 1];
+
+# leave grey and gold modules out if you want
+#plotMods = !(modColors %in% c("grey", "gold"));
+#text = modColors[plotMods];
+
+# Text labels for points
+plotMods = !(modColors %in% c(NA));
+text = modColors
+# Auxiliary convenience variable
+plotData = data.frame(medianRank=mp$preservation$observed[[discovery]][[validation]][, 2], Z_summary=mp$preservation$Z[[discovery]][[validation]][, 2],module_names=modColors,module_sizes=moduleSizes)
+png(file=paste0(path_output_2,"/Figure_S2B_PTB-modulePreservation.png"), wi = 12, he = 9,units = 'in', res = 480)
+p1<-ggplot(data=plotData,aes(x=module_sizes,y=medianRank,label = modColors))+geom_jitter(aes(x=module_sizes,y=medianRank,col=modColors),size=5)+xlab("Module size")+scale_y_reverse()+scale_x_continuous(trans='log10')+ylab("Preservation median rank")+scale_color_manual(values=modColors)+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Observed median rank summary statistic")+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=15))+ geom_text_repel()
+
+p2<-ggplot(data=plotData,aes(x=module_sizes,y=Z_summary,label = modColors))+geom_jitter(aes(x=module_sizes,y=Z_summary,col=modColors),size=5)+xlab("Module size")+scale_y_continuous(breaks=c(0,2,10,20,40,60))+scale_x_continuous(trans='log10')+ylab(TeX("\\textbf{Preservation $\\textit{\\Z_{summary}}$}"))+scale_color_manual(values=modColors)+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle(TeX("\\textbf{Permutation $\\textit{\\Z_{summary}}$ statistic}"))+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=15))+ geom_text_repel()+geom_hline(yintercept =c(0,2,10),linetype="dashed",col=c("red","blue","darkgreen"))
+cowplot::plot_grid(p1,p2, nrow = 1)
+dev.off()
+
+# Auxiliary convenience variable
+plotData = data.frame(medianRankDensity=mp$preservation$observed[[discovery]][[validation]][, "medianRankDensity.pres"], medianRankConnectivity=mp$preservation$observed[[discovery]][[validation]][, "medianRankConnectivity.pres"],Zdensity=mp$preservation$Z[[discovery]][[validation]][, "Zdensity.pres"], Zconnectivity=mp$preservation$Z[[discovery]][[validation]][, "Zconnectivity.pres"],module_names=modColors,module_sizes=moduleSizes)
+png(file=paste0(path_output_2,"/Figure_S2A_PTB-modulePreservation_details.png"), wi = 12, he = 9,units = 'in', res = 480)
+p1<-ggplot(data=plotData,aes(x=medianRankDensity,y=medianRankConnectivity,label = modColors))+geom_jitter(aes(size=module_sizes,col=modColors))+xlab("Preservation median rank density")+ylab("Preservation median rank conectivity")+scale_color_manual(values=modColors)+scale_x_reverse()+scale_y_reverse()+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Observed median rank statistics")+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=15))+ geom_text_repel()
+
+p2<-ggplot(data=plotData,aes(x=Zdensity,y=Zconnectivity,label = modColors))+geom_jitter(aes(size=module_sizes,col=modColors))+xlab(TeX("\\textbf{Preservation $\\textit{\\Z_{density}}$}"))+ylab(TeX("\\textbf{Preservation $\\textit{\\Z_{connectivity}}$}"))+scale_color_manual(values=modColors)+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle(TeX("\\textbf{Permutation $\\textit{\\Z}$statistics}"))+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=15))+ geom_text_repel()+geom_hline(yintercept =c(0,2,10),linetype="dashed",col=c("red","blue","darkgreen"))+geom_vline(xintercept =c(0,2,10),linetype="dashed",col=c("red","blue","darkgreen"))
+cowplot::plot_grid(p1,p2, nrow = 1)
+dev.off()
+
+
+```
+
+
+## Whole transcriptomic profling (Main results)
+
+### Module-traits associations
+
+
+```{r}
+# Load network data saved in the second part.
+lnames = load(file = paste0("Data/PTB-02-networkConstruction-auto.RData"));
+lnames
+net$MEsOK; MEs_discovery; moduleColors; moduleLabels
+
+### Recalculate module eigene (ME - PC1)
+# Set up variables to contain the ME 
+MEs = list();
+varExplained_firstPC <- list()
+# Calculate the ME for discovery and validation
+for (set in 1:nSets){
+  temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
+  temp_ME_order <- orderMEs(temp_ME)
+  MEs[[set]] = list(data = temp_ME_order)
+  temp_PC <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$varExplained)
+  names(temp_PC)<-colnames(temp_ME)
+  varExplained_firstPC[[set]] = list(data = temp_PC)
+}
+
+# re-order the names of module colors discovery cohort as the same in the validation cohorts
+MEs[[2]]$data = MEs[[2]]$data[,names(MEs[[1]]$data)]
+
+
+# varExplained_firstPC[[1]]$data
+
+ME_dat<-MEs[[1]]$data
+# 1-Pearson correlation distance
+colnames(ME_dat)<-gsub("ME","",colnames(MEs[[1]]$data))
+cor_mat <- cor(ME_dat,
+               use='pairwise.complete.obs',
+               method = "spearman")
+dist_matrix <- as.dist(1-cor_mat)
+# dist_matrix <- dist(ME_dat, method="euclidean")
+
+hc <- hclust(dist_matrix, method="ward.D2")
+hcd <- as.dendrogram(hc)
+## plot module hierarchical clustering
+png(file = paste0(path_output_2,"/PTB-Module_hierarchical_clustering_3.png"),
+    wi = 15, he = 10,units = 'in', res = 480)
+p1<-ggdendrogram(hc, rotate =T, theme_dendro = TRUE,size = 3)+
+  ylab("")+xlab("") +
+  theme_void()+ 
+  theme(legend.position="bottom")+
+  theme(panel.grid.minor = element_blank(),axis.title.x = element_blank(),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text(face="bold",colour="black", size=13),
+        axis.text.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12)) + 
+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))
+ 
+# pval matrix
+col=c("#001164", 'white', "#FF681E") #"#A50026"
+#col=c("#001164", 'white', "#A50026") #
+cor.pval.test <- function(x1, x2, ...) {
+  r <- ncol(x1)
+  n <- ncol(x2)
+  p.mat<- matrix(NA, r, n)
+  for (i in 1:r) {
+    for (j in 1:n) {
+      tmp <- cor.test(x1[, i], x2[, j], ...)
+      p.mat[i, j] <- tmp$p.value
+    }
+  }
+  rownames(p.mat) <-  colnames(x1)
+  colnames(p.mat) <- colnames(x2)
+  return(p.mat)
+}
+
+
+# Reorder the module base on hierarchical_clustering
+module_order<-rev(hc$labels[hc$order])
+ME_dat<-ME_dat[,module_order]
+## Plot the correlation between top-hit metabolites based on the cluster
+  # Plot2 : metabolites pairwise
+  # Mets vs each-other
+cor_method="spearman"
+mat2 <- cor(ME_dat,
+            use='pairwise.complete.obs', method = cor_method)
+ 
+# matrix of the p-value of the correlation
+p.mat2 <- cor.pval.test(ME_dat, ME_dat,
+                        method=cor_method, use='pairwise.complete.obs')
+p2 <-ggcorrplot(mat2,
+               p.mat = p.mat2, 
+               colors = col,hc.order = FALSE,
+               type = 'full',
+               outline.color = 'black',lab = T, lab_size = 3,insig="blank",
+               show.diag = T) +
+    scale_fill_gradient2(low=col[1], mid= col[2], high=col[3], na.value = 'gray50', limits=c(-1,1))+
+    labs(fill="Corr")+
+    theme(axis.text.x = element_blank(),axis.text.y = element_text(face="bold", colour="black", size=12),legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12))+theme(legend.position="right")
+cowplot::plot_grid(p1,p2, nrow = 1,rel_widths = c(1, 2))
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+```{r Figure 1A, echo=FALSE}
+load(file="Data/Module_discovery.Rdata")
+## Module-trait association analysis
+sizeGrWindow(10,6)
+textMatrix<-list()
+colnames(MEs[[1]]$data)<- gsub("ME","",colnames(MEs[[1]]$data))
+colnames(MEs[[2]]$data)<- gsub("ME","",colnames(MEs[[2]]$data))
+ME_dat <-MEs[[1]]$data %>% select(all_of(module_order))
+#Re-order the module by the hiereachical clustering 
+module_order_num<-order(colnames(ME_dat),rev(module_order))
+xLabels = c("Gene-Xpert \n Ct value", "Cavity","Lung proportion\n damage")
+
+png(file=paste0(path_output_2,"/Figure 1A-ModuleTraitRelationships-PTB.png"),
+    wi = 8, he = 8,units = 'in', res = 550)
+par(mfrow = c(1,2),mar = c(5,6,2.5,1))
+for(set in 1:nSets){
+datTraits<-traitData[[set]]$data %>% dplyr::select(c("log2_CT", "Cavity", "Lung_proportion"))
+dat_cor<-moduleTraitCor[[set]]
+dat_cor[,"Cavity"]<-round(exp(dat_cor[,"Cavity"]),3)
+  # Will display correlations and their p-values
+textMatrix[[set]] =  paste(signif(moduleTraitCor[[set]][module_order_num,c("log2_CT", "Cavity", "Lung_proportion")], 2), "\n(",
+                    signif(moduleTraitPvalue[[set]][module_order_num,c("log2_CT", "Cavity", "Lung_proportion")], 1), ")", sep = "");
+dim(textMatrix[[set]]) = dim(moduleTraitCor[[set]][module_order_num,c("log2_CT", "Cavity", "Lung_proportion")])
+# png(file=paste0(path_output_2,"/Figure 1A-ModuleTraitRelationships-PTB_",shortLabels[set],".png"),
+#     units="px", width=1800, height=1800, res=300)
+# par(mar = c(6, 8.5, 3, 3));
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor.scaled[[set]][module_order_num,c("log2_CT", "Cavity", "Lung_proportion")],
+               xLabels = xLabels,
+               yLabels = names(ME_dat),
+               ySymbols = names(ME_dat),
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix[[set]],
+               setStdMargins = FALSE,
+               cex.text = 0.7,
+               zlim = c(-3,3),
+               main = paste0(shortLabels[set]," cohort"))
+
+}
+dev.off()
+```
+
+
+```{r Figure 1B}
+load(file="Data/Module_discovery.Rdata")
+traits<-c("log2_CT")
+modules<-str_replace_all(rownames(moduleTraitPvalue[[1]]),"ME","")
+require("ggrepel")
+
+i<-1  
+dat_tmp<-data.frame("FDR_Discovery"=log10(moduleTraitPvalue.adj[[1]][,traits[i]]),
+                    "FDR_Validation"=log10(moduleTraitPvalue.adj[[2]][,traits[i]]),
+                    modules=modules)
+
+dat_tmp$modules <- factor(dat_tmp$modules) 
+col_value<-levels(dat_tmp$modules)
+
+
+png(file=paste0(path_output_2,"/Figure-1B-PTB-",traits[i],"-FDR_value_Discovery_vs_Validation.png"),res=500, units = 'in', width = 5, height =5)
+ggplot(data=dat_tmp,aes(x=`FDR_Discovery`,y=`FDR_Validation`,label = modules))+geom_jitter(aes(x=`FDR_Discovery`,y=`FDR_Validation`,col=modules),size=5)+xlab(TeX("$\\log_{10}$\\textit{(FDR)} discovery"))+scale_y_reverse() +scale_x_reverse() +ylab(TeX("$\\log_{10}$\\textit{(FDR)} validation"))+scale_color_manual(values=col_value)+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12)) + geom_text_repel()+geom_vline(xintercept=log10(0.1),linetype="dashed",col="red")+geom_hline(yintercept = log10(0.1),linetype="dashed",col="red")+coord_cartesian(ylim=c(0,-4),xlim=c(0,-4))
+dev.off()
+```
+
+### Intramodular analysis: identifying genes with high GA and MM with respect to bacterial burden
+
+##### Up-regulated modules with respect to bacterial burden.
+
+```{r include=FALSE}
+load(file="Data/Module_discovery.Rdata")
+load(file="Data/Gene Significance and Module Membership_log2_CT.Rdata")
+anno_coding <- subset(anno,class=="protein_coding")
+# We only focus on the significant modules, with FDR<0.1 in both discovery and validation cohort
+# Combine the p value from modules-traits association from two cohorts
+moduleTraitPvalue_1<-as.data.frame(moduleTraitPvalue.adj[[1]])
+moduleTraitPvalue_2<-as.data.frame(moduleTraitPvalue.adj[[2]])
+colnames(moduleTraitPvalue_1)<-paste0(colnames(moduleTraitPvalue_1),"_discovery")
+colnames(moduleTraitPvalue_2)<-paste0(colnames(moduleTraitPvalue_2),"_validation")
+moduleTraitPvalue_wide<-cbind(moduleTraitPvalue_1,moduleTraitPvalue_2)
+# Combine the correlation from modules-traits association from two cohorts
+moduleTraitCor_1<-as.data.frame(moduleTraitCor[[1]])
+moduleTraitCor_2<-as.data.frame(moduleTraitCor[[2]])
+colnames(moduleTraitCor_1)<-paste0(colnames(moduleTraitCor_1),"_discovery")
+colnames(moduleTraitCor_2)<-paste0(colnames(moduleTraitCor_2),"_validation")
+moduleTraitCor_wide<-cbind(moduleTraitCor_1,moduleTraitCor_2)
+```
+
+
+```{r Figure 3A,include=FALSE}
+selected_modules<-moduleTraitPvalue_wide%>% filter(log2_CT_discovery<0.1&log2_CT_validation<0.1) %>% rownames()
+upregulated_modules<-selected_modules
+p<-list()
+output_hubs<-data.frame()
+modNames = names(MEs[[1]]$data)
+for(i in 1:length(upregulated_modules)){
+module<-upregulated_modules[i]
+modNames<-modNames
+column<-match(module,modNames);
+moduleGenes<-(moduleColors==module);
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=-geneTraitAssociation_log2_CT[moduleGenes,1],
+                         GS=geneTraitSignificant_log2_CT[moduleGenes,1])
+
+# Identify the hub genes as the genes above the 5% and 95% quantiles for two directional selection
+MM_cutoff <- quantile(selected_module$MM,prob=c(0.025,0.975))
+GA_cutoff <- quantile(selected_module$GA,prob=c(0.025,0.975))
+
+GAMM <- selected_module %>% mutate(gene=rownames(geneModuleMembership)[moduleGenes],
+                                module=module)
+
+selected_genes_module <- subset(GAMM,((MM < MM_cutoff[1])|(MM > MM_cutoff[2]))& ((GA < GA_cutoff[1])|(GA > GA_cutoff[2]))) %>% filter(gene %in% anno_coding$gene_symbol)
+#selected_genes_module %<>% mutate(TCR_pathway=ifelse(gene%in%c("CD3G","MAPK14","PLCG1","ZAP70"),"TCR pathway","others"))
+
+
+# dim(selected_genes_module)
+# save(GAMM,selected_genes_module,file="Thuowng_proposal_module_brown.Rdata")
+png(file=paste0(path_output_2,"/Upregulation_Module_membership_bacterial_burden.png"),
+    res=400, units = 'in', width = 7.5, height =7.5)
+ggplot(data=GAMM,aes(x=MM,y=GA))+geom_point(alpha=0.1,col="#313695",size=3)+theme_bw()+stat_poly_line(se=F) +
+  xlab("Module Membership (PC1)")+ylab("Association between genes with bacterial load
+")+geom_hline(yintercept=GA_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_vline(xintercept=MM_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_point(data=selected_genes_module,aes(x=MM,y=GA),col="#313695",size=1.5,alpha=0.9)+geom_text_repel(data=selected_genes_module,aes(x=MM,y=GA,label=gene),size=3.5,col="#A50026")+stat_poly_line(se=T) +
+  stat_cor(size = 7,cor.coef.name = "r")+theme_bw()+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+# 
+output_hubs<-rbind(output_hubs,selected_genes_module)
+dev.off()
+}
+
+save(output_hubs,file="Data/Upregulation_Module_membership_bacterial_burden_profile.Rdata")
+
+```
+
+
+### Pathway analysis
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

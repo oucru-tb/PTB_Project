@@ -1,0 +1,580 @@
+---
+title: "27TB_analysis"
+author: "BAO"
+date: "2023-07-17"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+editor_options: 
+  chunk_output_type: console
+---
+
+# A Set up R enviroment {.tabset .tabset-fade .tabset-pills}
+
+## 1 R set up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	eval = TRUE,
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE,
+	fig.dim = c(8, 6)
+)
+
+setwd("R:/nguyenlehoaibao/anh_Nhat/Hurdle_26_27/2_analysis/")
+```
+
+## 2 Load R library and function
+
+```{r LoadPackages}
+library(matrixStats)
+library(MASS) 
+library(reshape2) 
+library(reshape)
+library(parameters)
+library(kableExtra)
+library(readr)
+library(dplyr)
+library(MASS)
+library(corrplot)
+library(patchwork)
+library(plotly)
+library(gtsummary)
+library(tidyverse)
+library(ggResidpanel)
+library(ggplot2)
+library( ggeffects)
+library(flextable)
+library(ggpubr)
+library(ggpmisc)
+library(epitools)
+library(compareGroups)
+library(DescTools)
+library(oddsratio)
+library(Hmisc)
+library(survival)
+library(ggExtra)
+library("tidyverse")
+library("rms")
+#library("ucidata")
+library("cowplot")
+library("Hmisc")
+library(patchwork)
+
+library(modelr)
+library(htmlTable)
+library(betareg)
+#install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+
+
+       # ggplot, dplyr, and friends
+library(brms)            # Bayesian modeling through Stan
+library(emmeans)         # Calculate marginal effects in fancy ways
+library(tidybayes)       # Manipulate Stan objects in a tidy way
+library(broom)           # Convert model objects to data frames
+library(broom.mixed)     # Convert brms model objects to data frames
+library(scales)          # For formatting numbers with commas, percents, and dollars
+library(patchwork)       # For combining plots
+library(ggh4x)           # For nested facets in ggplot
+library(ggtext)          # Use markdown and HTML in ggplot text
+library(MetBrewer)       # Use pretty artistic colors
+library(gapminder)       # Country-year panel data from the Gapminder project
+library(palmerpenguins)
+library(pheatmap)
+```
+
+```{r LoadPackages}
+options(mc.cores = 4,
+        brms.backend = "cmdstanr")
+
+CHAINS <- 4
+ITER <- 2000
+WARMUP <- 1000
+BAYES_SEED <- 1234
+
+# Use the Johnson color palette
+clrs <- MetBrewer::met.brewer("Johnson")
+
+# Tell bayesplot to use the Johnson palette (for things like pp_check())
+bayesplot::color_scheme_set(c("grey30", clrs[2], clrs[1], clrs[3], clrs[5], clrs[4]))
+
+# Custom ggplot theme to make pretty plots
+# Get the font at https://fonts.google.com/specimen/Jost
+theme_nice <- function() {
+  theme_minimal(base_family = "Jost") +
+    theme(panel.grid.minor = element_blank(),
+          plot.title = element_text(family = "Jost", face = "bold"),
+          axis.title = element_text(family = "Jost Medium"),
+          strip.text = element_text(family = "Jost", face = "bold",
+                                    size = rel(1), hjust = 0),
+          strip.background = element_rect(fill = "grey80", color = NA))
+}
+```
+
+## 3 Load Hurdel model
+
+Create a custom brms family with custom_family()
+
+```{r}
+hurdle_gaussian <- 
+# Create a custom family that is logit if y = 0, normal/gaussian if not
+  custom_family("hurdle_gaussian", 
+                dpars = c("mu", "sigma", "hu"),
+                links = c("identity", "log", "logit"),
+                lb = c(NA, 0, NA),
+                type = "real")
+```
+
+Provide some raw Stan code to handle the actual sampling
+
+```{r}
+# Stan code
+stan_funs <- "
+  real hurdle_gaussian_lpdf(real y, real mu, real sigma, real hu) { 
+    if (y == 0) { 
+      return bernoulli_lpmf(1 | hu); 
+    } else { 
+      return bernoulli_lpmf(0 | hu) +  
+             normal_lpdf(y | mu, sigma); 
+    } 
+  }
+"
+   
+# Prepare Stan code for use in brm()
+stanvars <- stanvar(scode = stan_funs, block = "functions")
+```
+
+Create some post-processing functions so that things like predict() work:
+
+```{r}
+posterior_predict_hurdle_gaussian <- function(i, prep, ...) {
+  mu <- brms::get_dpar(prep, "mu", i = i)
+  sigma <- brms::get_dpar(prep, "sigma", i = i)
+  theta <- brms::get_dpar(prep, "hu", i = i)
+     
+  hu <- runif(prep$ndraws, 0, 1)
+  ifelse(hu < theta, 0, rnorm(prep$ndraws, mu,sigma))
+}
+   
+posterior_epred_hurdle_gaussian <- function(prep) {
+  with(prep$dpars, mu * (1 - hu))
+}
+```
+
+# Load data RNAseq data
+
+```{r}
+#Read in the expression data set
+
+#"/home/ubuntu/tb_volume/Hai_Cpath_Analysis/Rstudio_sever/github_repos/General_analysis/RData/gene_clini_adjusted_ComBat_all.Rdata
+
+
+Data <- get(load(file="R:/nguyenlehoaibao/anh_Nhat/Hurdle_26_27/1_data/gene_clini_adjusted_ComBat_all.Rdata"))
+
+rownames(Data) <- Data$LIMS_ID
+# Take a quick look at what is in the data set:
+dim(Data)# 657, 20008
+Data[1:5,c(1:5,20000:20008)]
+## clinical data column
+clini_index <- 1:which(names(Data)=="Run")
+names(Data)[clini_index];
+
+
+## subset for TBM 
+Data_26_27 <- subset(Data,Study %in% c("26TB","27TB"))
+dim(Data_26_27)# 281 samples
+table(Data_26_27$timepoint)
+Data_26_27$studycode[1:5]
+
+hist(Data_26_27$CNIH4)
+hist(Data_26_27$DPRXP2)
+hist(Data_26_27$TLR5)
+hist(Data_26_27$SLC26A8)
+hist(Data_26_27$AC244453.2)
+
+Data_26_27<-Data_26_27 %>% select(LIMS_ID,studycode,Study,CNIH4,DPRXP2,TLR5,SLC26A8,AC244453.2)
+#"CNIH4"      "DPRXP2"     "TLR5"       "SLC26A8"    "AC244453.2"
+```
+
+# CT value: Extract CT value from CSF data base
+
+## 1. Data from lab
+
+```{r}
+library(readxl)
+
+CT_value_data <- read_excel("R:/nguyenlehoaibao/anh_Nhat/Hurdle_26_27/1_data/26n27TB.xlsx")
+dim(CT_value_data)#2473  , 80
+table(CT_value_data$Typeofsample)
+table(CT_value_data$Samplenumber)
+table(CT_value_data$rpoB)
+table(CT_value_data$GeneXpert)
+table(CT_value_data$Xpert_Ultra)
+CT_value_data<-CT_value_data %>% dplyr::select("Study_code","StudyCode1","StudyCode2","StudyCode3","Typeofsample","Samplenumber","ProbeA","ProbeB","ProbeC","ProbeD","ProbeE","SPC","DateSample","DateProcessed","Probe1_Ultra","Probe2_Ultra","Probe3_Ultra","Probe4_Ultra","ProbeIS_Ultra","SPC_Ultra","MGITculture","GeneXpert","Xpert_Ultra")
+
+table(duplicated(CT_value_data))
+CT_value_data<-CT_value_data %>% mutate(is_26_27TB=substr(StudyCode1, 1, 4))
+table(CT_value_data$is_26_27TB)
+CT_value_data<-CT_value_data %>% mutate(Study=substr(StudyCode1, 1, 4),
+                                        is_26_27TB=ifelse(is_26_27TB %in% c("26tb","26TB","27TB"),is_26_27TB,NA),
+                                        is_26_27TB=ifelse(is_26_27TB %in% c("26tb","26TB"),"26TB",is_26_27TB),
+                                        unique_id=(paste0(StudyCode1,"_",Typeofsample,"_",Samplenumber,"_",DateSample,"_",SPC,MGITculture))) %>% subset(is_26_27TB %in% c("26TB","27TB"))
+
+table(duplicated(CT_value_data$unique_id))
+
+row.names(CT_value_data)<-CT_value_data$unique_id
+table(CT_value_data$Study)
+CT_value_data$Study2<-factor(CT_value_data$Study,levels = c("26tb", "26TB", "27TB"),labels = c("26TB", "26TB", "27TB"))
+table(CT_value_data$Study2)
+```
+
+## 2 Xpert data continuous
+
+```{r}
+CT_value_data<-CT_value_data %>% mutate(ProbeA_na=ifelse(ProbeA==0,NA,ProbeA),
+                                        ProbeB_na=ifelse(ProbeB==0,NA,ProbeB),
+                                        ProbeC_na=ifelse(ProbeC==0,NA,ProbeC),
+                                        ProbeD_na=ifelse(ProbeD==0,NA,ProbeD),
+                                        ProbeE_na=ifelse(ProbeE==0,NA,ProbeE))
+
+CT_value_data_xpert<-CT_value_data %>% select(unique_id,Study2,StudyCode1,Typeofsample,Samplenumber,ProbeA_na,ProbeB_na,ProbeC_na,ProbeD_na,ProbeE_na,GeneXpert)
+CT_value_data_xpert<-as.data.frame(CT_value_data_xpert)
+table(CT_value_data_xpert$GeneXpert)
+CT_value_data_xpert<-CT_value_data_xpert%>%  mutate(Xpert_mean=(rowMeans(CT_value_data_xpert[,c(6:10)], na.rm=T)))
+
+a<-ggplot(CT_value_data_xpert,aes(x=ProbeA_na,y=Xpert_mean))+geom_jitter()
+b<-ggplot(CT_value_data_xpert,aes(x=ProbeB_na,y=Xpert_mean))+geom_jitter()
+c<-ggplot(CT_value_data_xpert,aes(x=ProbeC_na,y=Xpert_mean))+geom_jitter()
+d<-ggplot(CT_value_data_xpert,aes(x=ProbeD_na,y=Xpert_mean))+geom_jitter()
+e<-ggplot(CT_value_data_xpert,aes(x=ProbeE_na,y=Xpert_mean))+geom_jitter()
+f<-ggplot(CT_value_data_xpert %>% filter(GeneXpert %in% c("MTB NOT DETECTED","MTB NOT DETECTED(bs yeu cau chay)")),aes(x=GeneXpert,y=Xpert_mean))+geom_jitter()
+hist(CT_value_data_xpert$Xpert_mean)
+CT_value_data_xpert<-CT_value_data_xpert%>%  mutate(Xpert_mean= case_when( GeneXpert %in% c("MTB NOT DETECTED","MTB NOT DETECTED(bs yeu cau chay)") ~40,
+                T ~ Xpert_mean                                                           ))
+ggarrange(a,b,c,d,e,f)
+
+
+table(duplicated(CT_value_data_xpert$StudyCode1))# FALSE:729,  TRUE: 959
+
+
+CT_value_data_xpert_filter<-CT_value_data_xpert %>% filter(Typeofsample == "CSF" & Samplenumber == 1) %>% select(-unique_id)
+
+table(duplicated(CT_value_data_xpert_filter$StudyCode1))# FALSE:725,  TRUE: 12
+
+CT_value_data_xpert_filter<-CT_value_data_xpert_filter[!duplicated(CT_value_data_xpert_filter),]
+
+table(duplicated(CT_value_data_xpert_filter$StudyCode1))# FALSE:725,  TRUE: 2
+
+CT_value_data_xpert_filter$StudyCode1[duplicated(CT_value_data_xpert_filter$StudyCode1)]#  "26TB013-308"  "27TB013-1022"
+
+CT_value_data_xpert_filter[CT_value_data_xpert_filter$StudyCode1%in% c("26TB013-308", "27TB013-1022"),]
+
+CT_value_data_xpert_filter<-arrange(CT_value_data_xpert_filter,desc(Xpert_mean) )
+
+CT_value_data_xpert_filter<-CT_value_data_xpert_filter %>% filter(!duplicated(CT_value_data_xpert_filter$StudyCode1)) %>% select(Study2,StudyCode1,Xpert_mean)
+
+dim(CT_value_data_xpert_filter)# 725
+```
+
+## 3 Ultra Xpert data continuous
+
+```{r}
+colnames(CT_value_data)
+CT_value_data<-CT_value_data %>% mutate(Probe1_Ultra=ifelse(Probe1_Ultra==0,NA,Probe1_Ultra),
+                                        Probe2_Ultra=ifelse(Probe2_Ultra==0,NA,Probe2_Ultra),
+                                        Probe3_Ultra=ifelse(Probe3_Ultra==0,NA,Probe3_Ultra),
+                                        Probe4_Ultra=ifelse(Probe4_Ultra==0,NA,Probe4_Ultra),
+                                        ProbeIS_Ultra=ifelse(ProbeIS_Ultra==0,NA,ProbeIS_Ultra))
+table(CT_value_data$Study_code)
+table(CT_value_data$Samplenumber )
+table(CT_value_data$Typeofsample )
+table(CT_value_data$Xpert_Ultra )
+CT_value_data_Ultra<-CT_value_data %>% select(Study_code,StudyCode1   ,Samplenumber,Typeofsample,Probe1_Ultra,Probe2_Ultra,Probe3_Ultra,Probe4_Ultra,Xpert_Ultra)
+CT_value_data_Ultra<-as.data.frame(CT_value_data_Ultra)
+
+
+
+CT_value_data_Ultra<-CT_value_data_Ultra%>%  mutate(Ultra_mean=(rowMeans(CT_value_data_Ultra[5:8], na.rm=T)))
+
+
+a<-ggplot(CT_value_data_Ultra,aes(x=Probe1_Ultra,y=Ultra_mean))+geom_jitter()
+b<-ggplot(CT_value_data_Ultra,aes(x=Probe2_Ultra,y=Ultra_mean))+geom_jitter()
+
+c<-ggplot(CT_value_data_Ultra,aes(x=Probe3_Ultra,y=Ultra_mean))+geom_jitter()
+d<-ggplot(CT_value_data_Ultra,aes(x=Probe4_Ultra,y=Ultra_mean))+geom_jitter()
+e<-ggplot(CT_value_data_Ultra %>% filter(Xpert_Ultra == "MTB NOT DETECTED"),aes(x=Xpert_Ultra,y=Ultra_mean))+geom_jitter()
+
+ggarrange(a,b,c,d,e)
+
+
+
+CT_value_data_Ultra<-CT_value_data_Ultra%>%  mutate(Ultra_mean= case_when( Xpert_Ultra %in% c("MTB NOT DETECTED") ~ 40,
+                T ~ Ultra_mean ))
+hist(CT_value_data_Ultra$Ultra_mean)             
+                
+dim(CT_value_data_Ultra)
+table(CT_value_data_Ultra$Study_code)
+table(duplicated((CT_value_data_Ultra$StudyCode1)))# 729 , 959 
+table(CT_value_data_Ultra$Samplenumber)
+table(CT_value_data_Ultra$Typeofsample)
+CT_value_data_Ultra_filter<-CT_value_data_Ultra %>% filter(Typeofsample == "CSF" & Samplenumber == 1) 
+
+CT_value_data_Ultra_filter<-arrange(CT_value_data_Ultra_filter,desc(Ultra_mean) )
+
+CT_value_data_Ultra_filter<-CT_value_data_Ultra_filter %>% filter(!duplicated(CT_value_data_Ultra_filter$StudyCode1)) %>% select(StudyCode1,Ultra_mean)
+
+dim(CT_value_data_Ultra_filter)# 725
+```
+
+## 4 Merge xpert and ultra
+
+```{r}
+all(CT_value_data_xpert_filter$StudyCode1 %in% CT_value_data_Ultra_filter$StudyCode1)# TRUE
+
+CT_value_26_27<-merge(CT_value_data_xpert_filter,CT_value_data_Ultra_filter,by="StudyCode1",all.x=T)
+
+
+CT_value_26_27<-CT_value_26_27 %>% mutate(NAT = ifelse(is.na(Xpert_mean),Ultra_mean,Xpert_mean),
+                                    method = case_when(!is.na(Xpert_mean) ~ "Xpert",
+                                                       is.na(Xpert_mean) & !is.na(Ultra_mean) ~ "Ultra"))
+
+table(CT_value_26_27$method)# 50, 593
+hist(CT_value_26_27$NAT)
+CT_value_26_27<-CT_value_26_27 [!is.na(CT_value_26_27$method),]
+table(CT_value_26_27$Study2 )# 245 , 398
+write.csv(CT_value_26_27,"CT_value_26_27.csv")
+dim(CT_value_26_27)# 643
+```
+
+# Merge CT value and RNA seq
+
+```{r}
+Data_26_27$studycode[1:5]
+table(Data_26_27$studycode%in% CT_value_26_27$StudyCode1)#   FALSE: 27 ,  TRUE :   254
+
+Data_26_27_CT<-merge(Data_26_27,CT_value_26_27,by.x="studycode",by.y="StudyCode1",all.x=T)
+describe(Data_26_27_CT$NAT)
+
+Data_26_27_CT<-Data_26_27_CT[!is.na(Data_26_27_CT$NAT),]
+table(Data_26_27_CT$method)# 24, 230
+
+table(duplicated(Data_26_27_CT$studycode))
+
+table(Data_26_27_CT$Study)
+Data_26_27_CT$bacterial_load_1<-log2(40/Data_26_27_CT$NAT)
+hist(Data_26_27_CT$bacterial_load_1)
+summary(Data_26_27_CT$NAT)
+hist(Data_26_27_CT$NAT)
+
+ggplot(Data_26_27_CT, aes(x=bacterial_load_1))+geom_histogram()
+```
+
+# Analysis 1: association beteen gene expression and bacterial load (no HIV interaction)
+
+```{r}
+head(Data_26_27_CT)
+dim(Data_26_27_CT)# 254,  15
+#write.csv(Data_26_27_CT,"Data_26_27_CT.csv")
+
+table(Data_26_27_CT$Study)# 50  , 204
+
+
+### Visualization
+meta_names<-c("CNIH4"   ,   "DPRXP2"  ,   "TLR5"    ,   "SLC26A8"  ,  "AC244453.2")
+ 
+all(meta_names %in% colnames(Data_26_27_CT))# TRUE
+length(meta_names)## 22
+p_model_hurdle_DS<-list()
+result_tab_model_hurdle<-list()
+i=1
+Data_26_27_CT$"Bacterial load"<-Data_26_27_CT$bacterial_load_1
+for(i in 1:length(meta_names) ){
+  dat_new<-Data_26_27_CT %>% select(NAT,"Bacterial load",meta_names[i])
+  colnames(dat_new) <- c("Ct","bacterial_load_1","x") 
+  model_hurdle <- brm(
+  bf(bacterial_load_1 ~ x,
+     hu ~ x),
+  data = dat_new,
+  family = hurdle_gaussian,  # <--- This is new
+  stanvars = stanvars,   # <--- This is new
+  chains = CHAINS, iter = ITER, warmup = WARMUP, seed = BAYES_SEED,
+  silent = 2
+)
+  tidy(model_hurdle)
+c <- cbind.data.frame(data.frame(tidy(model_hurdle))[1:4,4:8],p.value=p_value(model_hurdle)[,2])
+colnames(c)<-c("Parameter","Estimate","std.error","conf.low","conf.high","p_value")
+
+ 
+
+result_tab_model_hurdle[[i]]<-c[3:4,]
+rownames(result_tab_model_hurdle[[i]])<-c(meta_names[i],paste0("hu_",meta_names[i]))
+
+ 
+
+
+newdata=data.frame(x=seq(min(Data_26_27_CT[,meta_names[i]],na.rm=T),max(Data_26_27_CT[,meta_names[i]],na.rm=T),len=50))
+pred<-fitted(model_hurdle, newdata = newdata)
+d<-cbind(newdata,pred)
+d<-d %>% mutate(CT_pred=40/2^(Estimate),
+              lower_pred=40/2^(Q2.5),
+              upper_pred=40/2^(Q97.5))
+
+ 
+
+p_model_hurdle_DS[[i]]<-ggplot(data=d,aes(x=x,y=CT_pred))+geom_line()+
+  geom_ribbon(aes(ymin=lower_pred,ymax=upper_pred,x=x),alpha=0.1)+scale_y_continuous(labels = label_comma()) +
+  labs(x = meta_names[i], y = "CT value",
+       subtitle = "") +
+  theme_nice() +
+  theme(legend.position = "bottom")+
+  geom_jitter(data=dat_new,aes(x = x, y = Ct), size = 2,alpha=0.1)+scale_y_reverse()+
+  theme(strip.text.x = element_text(color="black",size=20,face="bold"))+
+  theme(legend.position = "none",
+        legend.text = element_text(size = 20) ,legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=20), axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20), axis.title.y = element_text(size = 20,color="black",face="bold"))+scale_y_reverse()
+}
+pp_check(model_hurdle, ndraws = 500)
+#p_model_hurdle_DS_cowplot<-cowplot::plot_grid(plotlist = p_model_hurdle_DS, ncol = 3)
+p_model_hurdle_DS_cowplot
+#jpeg(file="hurdle_model_5_genes .jpeg",res=600, units = 'in', width = 12, height =8)
+#p_model_hurdle_DS_cowplot
+#dev.off()
+
+ 
+
+result<-as.data.frame(do.call(rbind, result_tab_model_hurdle))
+#write.csv(result,"hurdle_model_5_genes.csv")
+```
+
+# Analysis 2: association beteen CNIH4 and bacterial load with HIV interaction
+
+```{r}
+dim(Data_26_27_CT)# 254,  15
+table(Data_26_27_CT$Study)# 50  , 204
+Data_26_27_CT<-Data_26_27_CT %>% mutate (HIV = case_when(Study == "26TB" ~ "HIV-positive",
+                                                         Study == "27TB" ~ "HIV-negative"))
+table(Data_26_27_CT$HIV)
+Data_26_27_CT$HIV<-factor(Data_26_27_CT$HIV, levels=c("HIV-negative", "HIV-positive"))
+
+
+model_hurdle_CNIH4 <- brm(
+  bf(bacterial_load_1 ~ CNIH4+HIV,
+     hu ~ CNIH4),
+  data = Data_26_27_CT,
+  family = hurdle_gaussian,  # <--- This is new
+  stanvars = stanvars,   # <--- This is new
+  chains = CHAINS, iter = ITER, warmup = WARMUP, seed = BAYES_SEED,
+  silent = 2
+)
+
+tidy(model_hurdle_CNIH4)
+pp_check(model_hurdle_CNIH4, ndraws = 500)
+
+c <- cbind.data.frame(data.frame(tidy(model_hurdle_CNIH4))[1:5,4:8],p.value=p_value(model_hurdle_CNIH4)[,2])
+
+colnames(c)<-c("Parameter","Estimate","std.error","conf.low","conf.high","p_value")
+
+ 
+
+
+#summary(Data_26_27_CT$CNIH4)
+#newdata=data.frame(x=seq(8.753,11.771,len=50 ))
+
+
+conditions<-make_conditions(model_hurdle_CNIH4, "HIV")
+p<-plot(conditional_effects(model_hurdle_CNIH4, conditions = conditions))
+dat_model_hurdle_CNIH4<-p[[1]]$data
+#summary(dat_model_hurdle_CNIH4$CNIH4)
+
+dat_model_hurdle_CNIH4<-dat_model_hurdle_CNIH4 %>% mutate(CT_pred=40/2^(estimate__),
+              lower_pred=40/2^(lower__),
+              upper_pred=40/2^(upper__))
+
+ 
+
+p<-ggplot(data=dat_model_hurdle_CNIH4,aes(x=CNIH4,y=CT_pred,color=HIV, fill=HIV))+
+  #facet_grid(~HIV)+
+  #theme(strip.text.x = element_text(color="black",size=20,face="bold"))+
+  geom_line()+
+  geom_ribbon(aes(ymin=lower_pred,ymax=upper_pred,x=CNIH4),alpha=0.1)+
+  scale_y_continuous(labels = label_comma()) +
+  labs(x = "CNIH4", y = "Mtb Xpert Ct value",
+       subtitle = "") +
+  theme_nice() +
+  theme(legend.position = "bottom")+
+  geom_jitter(data=Data_26_27_CT,aes(x = CNIH4, y = NAT), size = 2,alpha=0.1)+#scale_y_reverse()+
+  theme(legend.position = "none",
+        legend.text = element_text(size = 20) ,legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=20), axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20), axis.title.y = element_text(size = 20,color="black",face="bold"))+
+  scale_color_manual(values=c("#313695", "#A50026"))+
+  scale_fill_manual(values=c("#313695", "#A50026"))
+p
+```
+
+# Analysis 3: association beteen CNIH4 and bacterial load without HIV interaction
+
+```{r}
+
+
+dim(Data_26_27_CT)# 254,  15
+#save(Data_26_27_CT, file = "Data_26_27_CT_CNIH4.Rdata.RData")
+
+
+  model_hurdle <- brm(
+  bf(bacterial_load_1 ~ CNIH4,
+     hu ~ CNIH4),
+  data = Data_26_27_CT,
+  family = hurdle_gaussian,  # <--- This is new
+  stanvars = stanvars,   # <--- This is new
+  chains = CHAINS, iter = ITER, warmup = WARMUP, seed = BAYES_SEED,
+  silent = 2
+)
+  tidy(model_hurdle)
+  pp_check(model_hurdle, ndraws = 500)
+c <- cbind.data.frame(data.frame(tidy(model_hurdle))[1:4,4:8],p.value=p_value(model_hurdle)[,2])
+colnames(c)<-c("Parameter","Estimate","std.error","conf.low","conf.high","p_value")
+
+
+summary(Data_26_27_CT$CNIH4)
+newdata=data.frame(CNIH4=seq(8.753,11.771,len=50))
+pred<-fitted(model_hurdle, newdata = newdata)
+d<-cbind(newdata,pred)
+d<-d %>% mutate(CT_pred=40/2^(Estimate),
+              lower_pred=40/2^(Q2.5),
+              upper_pred=40/2^(Q97.5))
+
+ 
+
+p<-ggplot(data=d,aes(x=CNIH4,y=CT_pred))+geom_line(size=2,col="#313695")+
+  geom_ribbon(aes(ymin=lower_pred,ymax=upper_pred,x=CNIH4),alpha=0.4,fill="#313695")+scale_y_continuous(trans = log2_trans(),
+    breaks = log2(seq(10,40,by=5)),
+    labels = seq(10,40,by=5))+
+  geom_jitter(data=Data_26_27_CT,aes(x = CNIH4, y = NAT), size=2.5,alpha=0.5)+
+  theme_bw()+
+  labs(x = paste("CNIH4"," expression level [log2 counts] "), y = "Mtb Xpert Ct value")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15))+scale_y_continuous(trans = log2_trans(),
+    breaks = log2(seq(10,40,by=5)),
+    labels = seq(10,40,by=5))
+p
+
+
+#png(file=paste0(getwd(),"/PTB_CNIH4.png"),res=450, units = 'in', width =10, height =10)
+#p
+#dev.off()
+```

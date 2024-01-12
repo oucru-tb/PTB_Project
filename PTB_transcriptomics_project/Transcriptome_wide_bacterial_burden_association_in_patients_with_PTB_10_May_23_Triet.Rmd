@@ -856,9 +856,13 @@ l<-load("/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/Data_2
 
 save(d2_long,file="d2_long.Rdata")
 
-d2_long %>% filter(gene_names=="CNIH4") %>% ggplot(aes(x=concentration ,y=log2_CT))+geom_point(size=2.5,alpha=0.5)+geom_smooth(method = "gam",formula = y ~ s(x),se = TRUE,size=2,col="#313695",fill="#313695")+
+d2_long %>% filter(gene_names=="CNIH4") %>% 
+  ggplot(aes(x=concentration ,y=log2_CT))+
+  geom_point(size=2.5,alpha=0.5)+
+  geom_smooth(method = "gam",formula = y ~ s(x),se = TRUE,size=2,col="#313695",fill="#313695")+
   theme_bw()+
-  labs(x = paste("CNIH4"," expression level [log2 counts] "), y = "Mtb Xpert Ct value")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
+  labs(x = paste("CNIH4"," expression level [log2 counts] "), y = "Mtb Xpert Ct value")+ 
+  theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
         axis.title.y = element_text(face="bold", colour="black", size=20),
         axis.text.y = element_text( colour="black", size=15),
         axis.text.x = element_text( colour="black", size=15),
@@ -867,12 +871,10 @@ d2_long %>% filter(gene_names=="CNIH4") %>% ggplot(aes(x=concentration ,y=log2_C
         legend.title = element_text( colour="black", size=15),
         legend.key = element_rect(colour = NA),
         strip.text=element_text(face = "bold",size=15))+scale_y_continuous(trans = log2_trans(),
-    breaks = log2(seq(10,40,by=5)),
-    labels = seq(10,40,by=5))->p
-
-png(file=paste0(path_output,"/PTB_CNIH4.png"),res=450, units = 'in', width =10, height =10)
+                                                                           breaks = log2(seq(10,40,by=5)),
+                                                                           labels = seq(10,40,by=5))->p
 p
-dev.off()
+d2_long %>% filter(gene_names=="CNIH4")
 ```
 
 ### Validation PCR method (Triet)
