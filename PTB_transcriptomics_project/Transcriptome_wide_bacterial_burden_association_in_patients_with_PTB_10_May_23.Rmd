@@ -32,21 +32,27 @@ library(tidyverse)
 library("stabs")
 library("mboost")
 library(DESeq2)
-path_output<-"/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Results"
-###------Import clinical data------###
-load("/home/ubuntu/tb_volume/PTB_transcriptomics_project/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
-clinical <-vst_data%>% select("Patient_ID","Age","SEX","BMI","Timika_score_CXR","Diabetes","Cavity_CXR","Lung_proportion_CXR","CT_mean","Timepoint","GeneXpert","HIV","trial_number","LIMS_ID") %>% rename("SEX"="Sex","trial_number"="Treatment_sensitive")
+library(CEMiTool)
 
-
+###--- Set Directory ---###
+local_dir<-getwd()
+setwd(local_dir)
+###------Import clinical and clean RNAseq and PCR data------###
+load(file="Data/Most_variance_RNA_genes.Rdata")
+load(file="Data/Fluidigm_PTB_data.Rdata")
+# Output Link
+path_output<-"Results"
+path_output_1<-"Results/Derive_results"
+path_output_2<-"Results/Figures_Tables"
 ```
 
-```{r include=FALSE}
+```{r eval=FALSE, include=FALSE}
 # Import raw RNA_seq data, do the do the stabilizing variance transformation, and select the top 10000 with high variances genes
-path_rawRNA_seqdata<-"/home/ubuntu/tb_volume/Hai_Cpath_Analysis/Rstudio_sever/github_repos"
-## load input data. This is the pooled data of all RNA_seq data
-lnames <- load(file=paste(path_rawRNA_seqdata,"RData/Data_RNAseq_RUN1andRUN2_15Feb2023.RData",sep="/"))
+path_input_RNA <- "Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"
+lnames <- load(path_input_RNA)
+
 ## load clinical data from the meta data
-All_sample_RNAseq <- readxl::read_excel(paste(path_rawRNA_seqdata,"General_analysis/Infor/All_sample_RNAseq.xlsx",sep="/"),sheet = "Run1and2") %>% as.data.frame()
+All_sample_RNAseq <- readxl::read_excel("Raw_data/All_sample_RNAseq.xlsx",sheet = "Run1and2") %>% as.data.frame()
 rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
 
 ## check clinical data and count data 
@@ -114,12 +120,14 @@ selected <- select_genes(RNA_data_transpose_filtered,filter_pval=0.35) #0.35
 RNA_data <- RNA_data[,selected]
 RNA_data$LIMS_ID<-vsd_t$LIMS_ID
 
+####----Check the level of expression between two batches----###
 expr_normalized_df <- data.frame(RNA_data) %>%
   pivot_longer(cols=RN7SL1:ZNF876P)
-expr_normalized_df<-plyr::join_all(list(expr_normalized_df,PTB_sample_RNAseq))
+expr_normalized_df<-plyr::join_all(list(expr_normalized_df,PTB_sample_RNAseq)) %>% 
+                    mutate(seq_Batch=factor(seq_Batch))
 
 
-expr_normalized_df %>% ggplot(., aes(x = Study, y = value)) +
+expr_normalized_df %>% ggplot(., aes(x = seq_Batch, y = value)) +
   geom_violin() +
   geom_jitter(width = 0.1,alpha=0.1,size=1) +
   theme_bw() +
@@ -138,52 +146,119 @@ png(file=paste0(path_output,"/Gene_expression_after_normalized_by_study.png"),
 p
 dev.off()
 
+####--------------------------------------------------------------------####
 
 gene_names_full<-colnames(RNA_data)
 gene_names_full<-gsub("-","_",gene_names_full)
 colnames(RNA_data)<-gene_names_full
 
+###---- Import PCR Fluidigm data ----###
+path_input_Fluidigm <- "Raw_data/Fluidigm_PTB_wide_2Jan2023.RData"
+load(path_input_Fluidigm)
+Fluidigm_PTB_wide %<>% as.data.frame() %>% dplyr::rename("Patient_ID"="studycode")
+Patient_Fluidigm_PTB<-Fluidigm_PTB_wide$Patient_ID
+###----------------------------------###
+
+## Import clinical data for RNA_seq and for PCR data
+path_input_clinical<-"Raw_data/Clinical full data 913 patients.csv"
+clinical <- read_csv(path_input_clinical)%>% as.data.frame()
+####-----Clinical data---####
+clinical_2<-clinical %>% select("studycode","DiagnosisAge","Gender","bmi","Timika.score","Diabetes","Cavity","Lung.proportion","CT_Xpert_mean","LIMS_ID","HGB","WBC","NEUTLE","LYMLE","MONOLE","EOSLE","PLAT","DUR","study","TBTreatedBefore","GenXpert.f") %>% 
+  mutate("Treatment_sensitive"=ifelse(study=="28TB","MDR","DS")) %>% 
+  dplyr::rename("Patient_ID"="studycode",
+                "Neutrophil"="NEUTLE",
+                "Lymphocyte"="LYMLE",
+                "Monocyte"="MONOLE",
+                "Eosinophil"="EOSLE",
+                "Platelet"="PLAT",
+                "Symptom_duration"="DUR",
+                "Lung_proportion"="Lung.proportion",
+                "Age"="DiagnosisAge",
+                "Timika_score"="Timika.score",
+                "TB_History"="TBTreatedBefore",
+                "GenXpert_catgry"="GenXpert.f"
+                )
+
+clinical_2 %<>% mutate(Neutrophil_counts=WBC*Neutrophil*0.01,
+                     log2_Neutrophil_counts=log2(Neutrophil_counts),
+                     Lymphocyte_counts=WBC*Lymphocyte *0.01,
+                     log2_Lymphocyte_counts=log2(Lymphocyte_counts),
+                     Monocyte_counts=WBC*Monocyte*0.01,
+                     log2_Monocyte_counts=log2(Monocyte_counts),
+                     Eosinophil_counts=WBC*Eosinophil*0.01,
+                     log2_Eosinophil_counts=log2(Eosinophil_counts),
+                     log2_Symptom_duration=log2(Symptom_duration+1),
+                     log2_Platelet_counts =log2(Platelet),
+                     log2_CT=log2(CT_Xpert_mean))
+
+# Remove one patient with RNA_seq quality low
+clinical_2%<>% filter(!is.na(LIMS_ID)&LIMS_ID!="HOA7818A92"|Patient_ID%in%Patient_Fluidigm_PTB)
+
+clinical_RNA_PTB <- clinical_2 %>% filter(!is.na(LIMS_ID)) %>% as.data.frame()
+
+clinical_Fluidigm_PTB <- clinical_2 %>% filter(Patient_ID%in%Patient_Fluidigm_PTB) %>% as.data.frame()
+
 # Here we only combine the 295 patients who have good RNA_seq quality
-clinical_RNA<-merge(RNA_data,clinical,by="LIMS_ID")
+clinical_RNA<-merge(RNA_data,clinical_RNA_PTB,by="LIMS_ID")
 RNA_data<-clinical_RNA[,gene_names_full]
 rownames(RNA_data)<-rownames(clinical_RNA)<-clinical_RNA$LIMS_ID
-save(RNA_data,clinical,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/Most_variance_RNA_genes.Rdata")
+
+# Here we only combine the 190 patients who have good PCR Fluidigm quality
+clinical_Fluidigm<-merge(Fluidigm_PTB_wide,clinical_Fluidigm_PTB,by="Patient_ID")
+
+clinical_2 %<>% mutate(cohort=ifelse(Patient_ID%in%Patient_Fluidigm_PTB,"Validation","Discovery"))
+
+save(Fluidigm_PTB_wide,clinical_2,clinical_Fluidigm,file="Data/Fluidigm_PTB_data.Rdata")
+save(RNA_data,clinical_RNA,clinical_2,file="Data/Most_variance_RNA_genes.Rdata")
 ```
 
 # Patient characteristics of discovery and validation cohort
 
 ```{r echo=FALSE}
-load(file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/Most_variance_RNA_genes.Rdata")
-# Here we only combine the 295 patients who have good RNA_seq quality
-clinical_RNA<-merge(RNA_data,clinical,by="LIMS_ID")
-
-rownames(clinical_RNA)<-rownames(RNA_data)
-clinical_RNA%<>% as.data.frame() %>% mutate(log2_CT=log2(CT_mean))
+clinical_RNA%<>% as.data.frame() %>% mutate(log2_CT=log2(CT_Xpert_mean))
 datExpr0<-datExpr<-RNA_data %>% select(-LIMS_ID)
 gene_names_full<-colnames(datExpr)
+```
 
+```{r echo=FALSE}
 splitting_set_size <- 0.5
 set.seed(1234) #4650
-n<-nrow(clinical)
-index_set_1 <- sample (1:n, floor(splitting_set_size * nrow(clinical)), replace=F)
+n<-nrow(clinical_RNA_PTB)
+index_set_1 <- sample (1:n, floor(splitting_set_size * nrow(clinical_RNA_PTB)), replace=F)
 index_set_2<-(1:n)[!(1:n%in%index_set_1)]
-
-set_1_set  <- clinical[index_set_1, ] %>% select("Age","Sex","BMI","Treatment_sensitive","Diabetes","CT_mean","Cavity_CXR","Lung_proportion_CXR")
-set_2_set <- clinical[index_set_2,]%>% select("Age","Sex","BMI","Treatment_sensitive","Diabetes","CT_mean","Cavity_CXR","Lung_proportion_CXR")
+clinical_tmp<-clinical_RNA_PTB %>% select("Age","Gender","bmi","Treatment_sensitive","TB_History","Symptom_duration","Diabetes",
+                             "CT_Xpert_mean","HGB","WBC","Neutrophil_counts","Lymphocyte_counts","Monocyte_counts","Eosinophil_counts",
+                              "Timika_score","Cavity","Lung_proportion")
+set_1_set  <- clinical_tmp[index_set_1,] 
+set_2_set  <- clinical_tmp[index_set_2,]
 
 # Overview patient characteristics to see if the characteristics are distributed equally
-set_1_set$Set <- 'Discovery set'
-set_2_set$Set <- 'Validation set'
+set_1_set$Set <- 'Train set'
+set_2_set$Set <- 'Test set'
 
 PTB_sets <- rbind(set_1_set, set_2_set) %>% 
-  mutate(Set=factor(Set,levels=c('Discovery set','Validation set')))
+  mutate(Set=factor(Set,levels=c('Train set','Test set')))
 
-table <- 
+table <- PTB_sets %>% 
   tbl_summary(
-    PTB_sets,
     by = Set, # split table by group
     missing = "ifany", # don't list missing data separately,
-    statistic=list(all_continuous() ~ "{N_nonmiss}")
+    label = list( Age~"Age [year]",
+                  bmi~"BMI [kg/m2]",
+                  TB_History~"TB History",
+                  Symptom_duration~"Symptom duration (days)",
+                  Diabetes~"Diabetes Metilus",
+                  CT_Xpert_mean~"GeneXpert mean Ct value",
+                  HGB~ "Hemoglobin (g/dl)", ## HGB
+                  WBC~"Total white blood cell counts (G/L)",
+                  Neutrophil_counts~"Neutrophil count (G/L)",
+                  Lymphocyte_counts~"Lymphocyte count (G/L)",
+                  Monocyte_counts~"Monocyte count (G/L)",
+                  Eosinophil_counts~"Eosinophil count (G/L)",
+                  Timika_score~"Chest X-ray Timika score",
+                  Cavity~"Chest Xray Cavity",
+                  Lung_proportion~"Lung proportion damage (%)"
+                )
   ) %>%
   add_n() %>% # add column with total number of non-missing observations
   add_p() %>% # test for a difference between groups
@@ -224,7 +299,9 @@ for(i in gene_names_full){
   }
 }
 R_sq<-data.frame(signal_genes=signal_genes,Rsq_adj=Rsq_adj) %>% arrange(desc(Rsq_adj))
-save(signal_genes,R_sq,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/signal_genes_discovery.Rdata")
+# save(signal_genes,R_sq,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/signal_genes_discovery.Rdata")
+# load(file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/signal_genes_discovery.Rdata")
+save(signal_genes,R_sq,file="Data/signal_genes_discovery.Rdata")
 ```
 
 ```{r eval=FALSE, include=FALSE}
@@ -241,7 +318,9 @@ for(i in gene_names_full){
   }
 }
 R_sq<-data.frame(signal_genes=signal_genes,Rsq_adj=Rsq_adj) %>% arrange(desc(Rsq_adj))
-save(signal_genes,R_sq,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/signal_genes_validation.Rdata")
+# save(signal_genes,R_sq,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/signal_genes_validation.Rdata")
+# load(file="Data/signal_genes_validation.Rdata")
+save(signal_genes,R_sq,file="Data/signal_genes_validation.Rdata")
 ```
 
 ### Step 1: Ranking signal genes with criteria (150-1500) and selecting top-hit genes on set_1 set.
@@ -278,14 +357,14 @@ for(k in 1:B) {
   branks[k,]<-order(sort(bR2,decreasing = T,index.return=T)$ix)
   print(k)
 }
-file_names<-paste0("/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/correlation_set_1_set_",gsub("-","_", Sys.Date()),".Rdata")
+file_names<-paste0("Data/correlation_set_1_set_",gsub("-","_", Sys.Date()),".Rdata")
 save(branks,R2,file=file_names)
 ```
 
 #### Re-sampling ranking based on the estimate R_sq of genes on Gene-Xpert Ct value on discovery set.
 
 ```{r fig.height=10, fig.width=10, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/correlation_set_1_set_2023_07_16.Rdata")
+load(file="Data/correlation_set_1_set_2023_07_16.Rdata")
 
 gene_names<-colnames(branks)
 branks<-as.matrix(branks)
@@ -346,13 +425,13 @@ R2_sum %>%
         strip.text=element_text(face = "bold",size=12))+ggtitle("Bi-directional ranking
 ") +  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))->p2
 R2_sum_set_1_set<-R2_sum %<>%  arrange((`rank-50%`))
-save(R2_sum_set_1_set,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/R2_sum_set_1.Rdata")
+save(R2_sum_set_1_set,file="Data/R2_sum_set_1.Rdata")
 ```
 
 ### Step 2: Ranking signal genes with criteria (150-1500) and selecting top-hit genes on set_2 set.
 
 ```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/signal_genes_validation.Rdata")
+load(file="Data/signal_genes_validation.Rdata")
 set.seed(123)
 B <- 2000
 m<-ceiling(floor(splitting_set_size * nrow(clinical_RNA))*2/3)
@@ -383,14 +462,14 @@ for(k in 1:B) {
   branks[k,]<-order(sort(bR2,decreasing = T,index.return=T)$ix)
   print(k)
 }
-file_names<-paste0("/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/correlation_set_2_set_",gsub("-","_", Sys.Date()),".Rdata")
+file_names<-paste0("Data/correlation_set_2_set_",gsub("-","_", Sys.Date()),".Rdata")
 save(branks,R2,file=file_names)
 ```
 
 #### Re-sampling ranking based on the estimate HR of genes on two-month mortality on validation set.
 
 ```{r fig.height=10, fig.width=10, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/correlation_set_2_set_2023_07_16.Rdata")
+load(file="Data/correlation_set_2_set_2023_07_16.Rdata")
 gene_names<-colnames(branks)
 branks<-as.matrix(branks)
 branks_sum<-matrixStats::colQuantiles(branks,probs = c(0.025,0.975,0.5)) %>% as.data.frame()
@@ -450,14 +529,14 @@ R2_sum %>%
         strip.text=element_text(face = "bold",size=12))+ggtitle("Bi-directional ranking
 ") +  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))->p2
 R2_sum_set_2_set<-R2_sum %<>%  arrange((`rank-50%`))
-save(R2_sum_set_2_set,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/R2_sum_set_2.Rdata")
+save(R2_sum_set_2_set,file="Data/R2_sum_set_2.Rdata")
 ```
 
 ### Combine signals from the two independent sets
 
 ```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/R2_sum_set_1.Rdata")
-load(file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/R2_sum_set_2.Rdata")
+load(file="Data/R2_sum_set_1.Rdata")
+load(file="Data/R2_sum_set_2.Rdata")
 
 R2_sum_set_1_set %<>% mutate(select=ifelse((`rank-2.5%`<=50 & `rank-97.5%`<=500 & `R2-50%`>0.04),"yes","no")) 
 R2_sum_set_2_set %<>% mutate(select=ifelse((`rank-2.5%`<=50 & `rank-97.5%`<=500 & `R2-50%`>0.04),"yes","no")) 
@@ -468,19 +547,19 @@ top_hit_set_2_signal<-R2_sum_set_2_set$gene_names[R2_sum_set_2_set$select=="yes"
 (common_list<-top_hit_set_1_signal[top_hit_set_1_signal%in%top_hit_set_2_signal])
 a<-cbind(gene_names=common_list)
 
-write.table(a,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/top_hit.txt",quote = F,row.names = F)
+write.table(a,file="Data/top_hit.txt",quote = F,row.names = F)
 
 R2_sum_set_1_set_tophit<-R2_sum_set_1_set %>% filter(select=="yes") %>% mutate(Set="Discovery set") %>% as.data.frame()
 R2_sum_set_2_set_tophit<-R2_sum_set_2_set %>% filter(select=="yes") %>% mutate(Set="Validation set")%>% as.data.frame()
 
 R2_top_hit<-rbind(R2_sum_set_1_set_tophit,R2_sum_set_2_set_tophit) %>% mutate(validated_signal=ifelse(gene_names%in%common_list,"yes","no"))
-save(R2_top_hit,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/R2_top_hit.Rdata")
+save(R2_top_hit,file="Data/R2_top_hit.Rdata")
 ```
 
 #### Forest-plots of top-hit genes
 
 ```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-load(file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/R2_top_hit.Rdata")
+load(file="Data/R2_top_hit.Rdata")
 ```
 
 ```{r echo=FALSE, fig.height=30, fig.width=30, message=FALSE, warning=FALSE, paged.print=FALSE}
@@ -523,7 +602,7 @@ p2<-R2_top_hit %>% mutate(name = reorder(gene_names, dplyr::desc(`rank-50%`))) %
         strip.text=element_text(face = "bold",size=18),
         plot.title = element_text(face = "bold",size=18,hjust = 0.5))
 cowplot::plot_grid(p1,p2, nrow = 1)
-png('/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Results/Ranking_R2_signal_genes.png',res=400, units = 'in', width = 20, height =20)
+png('Results/Figures_Tables/Ranking_R2_signal_genes.png',res=400, units = 'in', width = 20, height =20)
 cowplot::plot_grid(p1,p2, nrow = 2)
 dev.off()
 ```
@@ -539,7 +618,7 @@ corr2 <- round(cor(clinical_RNA_signal[index_set_2,common_list],use = 'pairwise.
 p2<-ggcorrplot(corr2, hc.order = TRUE, outline.col = "white",lab = TRUE,lab_size = 2)+labs(title = "Validation set")
 cowplot::plot_grid(p1,p2, nrow = 1)
 
-png('/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Results/correlation_top_hit.png',res=400, units = 'in', width = 10, height =5)
+png('Results/Figures_Tables/correlation_top_hit.png',res=400, units = 'in', width = 10, height =5)
 cowplot::plot_grid(p1,p2, nrow = 1)
 dev.off()
 ```
@@ -798,7 +877,10 @@ df <-d2_long %>% filter(gene_names==names[i])
 # }
 p_tmp<-ggplot(data=df,aes(x=expression_level ,y=log2_CT))+geom_point(size=2.5,alpha=0.5)+geom_smooth(method = lm,formula = y ~ splines::bs(x, 3), se = T,size=2,lapha=0.5)+
   theme_bw()+
-  labs(x = paste(gene_names[i]," abundance [log2 +1sd] "), y = "log2 CT")+theme_bw()+theme(legend.position="bottom")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+  labs(x = paste(gene_names[i]," abundance [log2 +1sd] "), y = "log2 CT")+
+  theme_bw()+
+  theme(legend.position="bottom")+
+  theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
         axis.title.y = element_text(face="bold", colour="black", size=20),
         axis.text.y = element_text( colour="black", size=15),
         axis.text.x = element_text( colour="black", size=15),
@@ -830,9 +912,13 @@ l<-load("/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/Data_2
 
 save(d2_long,file="d2_long.Rdata")
 
-d2_long %>% filter(gene_names=="CNIH4") %>% ggplot(aes(x=concentration ,y=log2_CT))+geom_point(size=2.5,alpha=0.5)+geom_smooth(method = "gam",formula = y ~ s(x),se = TRUE,size=2,col="#313695",fill="#313695")+
+d2_long %>% filter(gene_names=="CNIH4") %>% 
+  ggplot(aes(x=concentration ,y=log2_CT))+
+  geom_point(size=2.5,alpha=0.5)+
+  geom_smooth(method = "gam",formula = y ~ s(x),se = TRUE,size=2,col="#313695",fill="#313695")+
   theme_bw()+
-  labs(x = paste("CNIH4"," expression level [log2 counts] "), y = "Mtb Xpert Ct value")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
+  labs(x = paste("CNIH4"," expression level [log2 counts] "), y = "Mtb Xpert Ct value")+ 
+  theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
         axis.title.y = element_text(face="bold", colour="black", size=20),
         axis.text.y = element_text( colour="black", size=15),
         axis.text.x = element_text( colour="black", size=15),
@@ -840,13 +926,13 @@ d2_long %>% filter(gene_names=="CNIH4") %>% ggplot(aes(x=concentration ,y=log2_C
         legend.text = element_text(size = 15),
         legend.title = element_text( colour="black", size=15),
         legend.key = element_rect(colour = NA),
-        strip.text=element_text(face = "bold",size=15))+scale_y_continuous(trans = log2_trans(),
+        strip.text=element_text(face = "bold",size=15))+
+  scale_y_continuous(trans = log2_trans(),
     breaks = log2(seq(10,40,by=5)),
     labels = seq(10,40,by=5))->p
 
 png(file=paste0(path_output,"/PTB_CNIH4.png"),res=450, units = 'in', width =10, height =10)
 p
-
 dev.off()
 ```
 
