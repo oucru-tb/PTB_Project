@@ -1,0 +1,395 @@
+---
+title: "DifferentialExpressionAnalysis_PTB_TBM"
+author: "Triet"
+date: "2024-01-18"
+output: html_document
+---
+
+# Hey!
+
+## 1. Import libraries and data
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE)
+library(parallel)
+mcore<-1 # for Window PC
+
+#Load libraries
+library(dplyr)
+library(readxl)
+library(writexl)
+library(survival)
+library(glmnet)
+library(stabs)
+library(tidyverse)
+library(magrittr)
+library(Hmisc)
+library(gtsummary)
+library(WGCNA)
+library(ggcorrplot)
+library(scales)
+library(gridExtra)
+library(ggcorrplot)
+library(broom)
+library(rms)
+library(tidyverse)
+library("stabs")
+library("mboost")
+library(DESeq2)
+library(CEMiTool)
+```
+
+```{r}
+path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
+                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Triet_Results")
+path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
+                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
+load(paste0(path_input,"/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")) #vst_data 295 31425
+load(paste0(path_input,"/Raw_data/vst_Gensymbol_allTBM_281Sample_12Jan24.RData")) #tbm_vst 281 31381
+rownames(tbm_vst) <- tbm_vst$LIMS_ID
+load(paste0(path_input,"/Data/Fluidigm_PTB_data.Rdata"))
+load(paste0(path_input,"/Data/Most_variance_RNA_genes.Rdata"))
+load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
+load(paste0(path_input, "Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
+All_sample_RNAseq <- readxl::read_excel(paste0(path_input,"Raw_data/All_sample_RNAseq.xlsx"),sheet = "Run1and2") %>% as.data.frame()
+rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
+```
+
+```{r}
+vst_ptb_tbm <- rbind.fill(vst_data,tbm_vst)
+vst_ptb_tbm %<>% mutate(Type=ifelse(LIMS_ID %in% vst_data$LIMS_ID,"PTB","TBM"))
+#rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
+
+healthy_ComBat <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,trial_number %in% c('HV','43TB'))$LIMS_ID)
+qt<-quantile(healthy_ComBat$CNIH4,c(0.75)) #Q3 CNIH4 of healthy control
+
+PTB_TBM_ComBat <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,(Timepoint=='D0') & (trial_number %in% c('MDR_PTB','DS_PTB','26TB','27TB')))$LIMS_ID)
+PTB_TBM_ComBat %<>% mutate(CNIH4level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
+#rownames(PTB_TBM_ComBat) <- PTB_TBM_ComBat$LIMS_ID
+vst_ptb_tbm <- merge(vst_ptb_tbm,PTB_TBM_ComBat %>% select('LIMS_ID','CNIH4level'),by="LIMS_ID")
+rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
+```
+
+### Draft analysis - Playground
+
+```{r}
+library(ggplot2)
+library(ggpmisc)
+df <- filter(vst_ptb_tbm,Type=='PTB') %>% select(c('CNIH4','CD274','CD58','CT_mean')) %>% mutate(CD274_CD58=CD274/CD58)
+
+ggcorrplot(cor(df, use='pairwise.complete.obs',method = cor_method),
+           p.mat = cor.pval.test(df, df, method=cor_method, use='pairwise.complete.obs'), 
+           lab = T,
+           lab_size = 2,
+           insig="blank",
+           outline.color = 'black')+
+  theme(legend.position="right")+
+  labs(fill="Corr")+
+  theme(axis.text.x = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text(face="bold", colour="black", size=12),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12))+
+  guides(fill = guide_colourbar(title = "Corr",
+                                size=15,
+                                barheight = 40))
+
+ggplot(data=df, aes_string(x='CNIH4',y=as.name('CD274_CD58')))+
+  geom_point(alpha=0.2,col='red')+
+  theme_bw()+
+  stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7,method = 'spearman')+
+  theme_bw()+ 
+  ylab(paste0(as.name('CD58')," expression"))+
+  xlab("CNIH4 expression")+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+  #scale_fill_gradientn(colors=natparks.pals("Acadia"),limit = c(-1,1))
+```
+
+```{r}
+df <- filter(vst_ptb_tbm,Type=='PTB')
+df %<>% mutate(Neutrophil_counts=WBC*NEUTLE*0.01,
+                     log2_Neutrophil_counts=log2(Neutrophil_counts),
+                     Lymphocyte_counts=WBC*LYMLE *0.01,
+                     log2_Lymphocyte_counts=log2(Lymphocyte_counts),
+                     Monocyte_counts=WBC*MONOLE*0.01,
+                     log2_Monocyte_counts=log2(Monocyte_counts),
+                     Eosinophil_counts=WBC*EOSLE*0.01,
+                     log2_Eosinophil_counts=log2(Eosinophil_counts))
+
+impute_df <-  read.csv(paste0(path_input,'/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt'),sep='\t')
+
+model <- lm(CNIH4~Lymphocyte_counts+Monocyte_counts+Neutrophil_counts+Lymphocyte_counts+CD274, data = df)
+summary(model)
+```
+
+## 2. Define helper functions
+
+```{r}
+
+get_genelist_pathway_kegg <- function(hsa_ID){
+  library("KEGGREST")
+  names <- keggGet(hsa_ID)[[1]]$GENE
+  namesodd <-  names[seq(0,length(names),2)]
+  namestrue <- gsub("\\;.*","",namesodd)
+}
+
+cor.pval.test <- function(x1, x2, ...) {
+  r <- ncol(x1)
+  n <- ncol(x2)
+  p.mat<- matrix(NA, r, n)
+  for (i in 1:r) {
+    for (j in 1:n) {
+      tmp <- cor.test(x1[, i], x2[, j], ...)
+      p.mat[i, j] <- tmp$p.value
+    }
+  }
+  rownames(p.mat) <-  colnames(x1)
+  colnames(p.mat) <- colnames(x2)
+  return(p.mat)
+}
+```
+
+## 3. Analysis
+
+### 3.1. Differential Co-expression 121 gen in Low and High CNIH4 in PTB
+
+```{r}
+library(dcanr)
+
+#TCR_gene_list <-get_genelist_pathway_kegg('hsa04660')
+
+TCR_gene_list <- c('TNFSF12','TSLP','TNFSF10','OSM','CSF1','LTA','IL33','IL27','IL18','IL17F','IL17A','IL15','IL13','CXCL8','IL7','IL6','IL4','IL2','CSF2','CSF3','FLT3LG','IL12A', 'IL12B', 'IL10', 'IL1B','IL6','IL4','IFNG','TNF')
+
+TCR_df <- vst_ptb_tbm %>% select(any_of(c(TCR_gene_list,'Type','CNIH4level'))) # Columns `PAK5`, `BUB1B-PAK6`, `IL2`, and `CSF2` don't exist.
+colSums(is.na(TCR_df)) #Check NA
+dim(TCR_df)
+df <- filter(TCR_df,Type=='PTB')
+#df <- df[order(df$CNIH4level,decreasing=FALSE, na.last=FALSE),]
+df %<>% mutate(CNIH4level=ifelse(CNIH4level =='LOW',1, 2))
+
+cor_method = 'spearman'
+lowCNIH4_mat <- cor(df%>%filter(CNIH4level==1)%>%select(any_of(TCR_gene_list)),
+                      use='pairwise.complete.obs',
+                      method = cor_method)
+
+p.lowCNIH4_mat <- cor.pval.test(df%>%filter(CNIH4level==1)%>%select(any_of(TCR_gene_list)), 
+                                df%>%filter(CNIH4level==1)%>%select(any_of(TCR_gene_list)),
+                                  method=cor_method, 
+                                  use='pairwise.complete.obs')
+
+highCNIH4_mat <- cor(df%>%filter(CNIH4level==2)%>%select(any_of(TCR_gene_list)),
+                      use='pairwise.complete.obs',
+                      method = cor_method)
+
+p.highCNIH4_mat <- cor.pval.test(df%>%filter(CNIH4level==2)%>%select(any_of(TCR_gene_list)), 
+                                  df%>%filter(CNIH4level==2)%>%select(any_of(TCR_gene_list)), 
+                                  method=cor_method, 
+                                  use='pairwise.complete.obs')
+
+emat <- t(df%>%select(any_of(TCR_gene_list))) #tranpose
+condition <- df$CNIH4level # high and low
+scores <- dcScore(emat, 
+                  condition,
+                  dc.method = "zscore",
+                  cor.method = 'spearman')
+raw_p <- dcTest(scores, emat, condition)
+raw_p[is.na(raw_p)] <- 1000
+adj_p <- dcAdjust(raw_p, f = p.adjust, method = 'fdr')
+```
+
+```{r}
+library(igraph)
+library(qgraph)
+
+col = c("#00b8ff","black","magenta")
+
+highlow_mat <- highCNIH4_mat
+highlow_mat[upper.tri(highCNIH4_mat,diag=F)] <- lowCNIH4_mat[upper.tri(lowCNIH4_mat,diag=F)]
+p.highlow_mat <- p.highCNIH4_mat
+p.highlow_mat[upper.tri(p.highCNIH4_mat,diag=F)] <- p.lowCNIH4_mat[upper.tri(p.lowCNIH4_mat,diag=F)]
+
+p12<-ggcorrplot(highlow_mat[,dim(highlow_mat)[1]:1],
+           p.mat = p.highlow_mat[,dim(highlow_mat)[1]:1], 
+           lab = F,
+           lab_size = 2,
+           insig="blank",
+           outline.color = 'black')+
+  theme(legend.position="right")+
+  labs(fill="Corr")+
+  theme(axis.text.x = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text(face="bold", colour="black", size=12),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12))+
+  guides(fill = guide_colourbar(title = "Corr",
+                                size=15,
+                                barheight = 40)) + 
+  scale_fill_gradientn(colors=natparks.pals("Acadia"),limit = c(-1,1)) + annotate('segment', 
+               x = dim(highlow_mat)[1] + .5, 
+               xend = 0.5, 
+               y = 0.5, 
+               yend = dim(highlow_mat)[1] + .5, 
+               color = 'black', size = 0.25)
+
+tmp <- highlow_mat
+#tmp[is.na(raw_p)] <- NA
+tmp[raw_p >= 0.05] <- NA
+tmp<-which(!is.na(tmp[dim(highlow_mat)[1]:1,]), arr.ind=T)
+
+for(row in 1:nrow(tmp)) {
+  i = tmp[row,]
+  p12 <- p12 + annotate('rect', 
+               xmin = i[2]-0.5, 
+               xmax = i[2]+0.5, 
+               ymin = i[1]-0.5, 
+               ymax = i[1]+0.5,
+           fill = NA, color = 'black', size = 0.5)
+}
+
+ggcorrplot(scores[,dim(highlow_mat)[1]:1],
+           p.mat = raw_p[,dim(highlow_mat)[1]:1], 
+           colors = col,
+           show.diag = TRUE,
+           lab = F, 
+           lab_size = 2,
+           insig="blank",
+           #ggtheme =ggplot2::theme_void,
+           outline.color = 'black',
+           )
+
+p3 <- ggcorrplot(scores[,dim(highlow_mat)[1]:1],
+           p.mat = raw_p[,dim(highlow_mat)[1]:1], 
+           colors = col,
+           show.diag = TRUE,
+           lab = F, 
+           lab_size = 2,
+           insig="blank",
+           #ggtheme =ggplot2::theme_void,
+           outline.color = 'black',
+           ) +
+  theme(legend.position="right")+
+  labs(fill="Differential Z-scores")+
+  scale_fill_gradient2(limit = c(-6,6), 
+                       low = col[1], 
+                       high =  col[3], 
+                       mid = col[2], midpoint = 0)+
+  
+  theme(axis.text.x = element_text(face="bold", colour="black", size=12,angle = 45),
+        axis.text.y = element_text(face="bold", colour="black", size=12,hjust = 1),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12,angle = -90,
+                                     hjust = 0.5, vjust = 0.5),
+        panel.border = element_rect(colour = "black", fill=NA, size=1,linewidth = 1)) +   
+  guides(fill = guide_colourbar(title = "Differential Z-scores",
+                                title.position = "right",size=15,
+                                barheight = 40))
+p3
+############################################################################################
+set.seed(7)
+dcnet <- dcNetwork(scores,
+                   raw_p,
+                   thresh=0.05)
+
+e <- get.edgelist(dcnet,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,
+                                       vcount=vcount(dcnet),
+                                       area=15*(vcount(dcnet)^2),
+                                       repulse.rad=(vcount(dcnet)^3.3)
+                                       )
+# Isolated = which(degree(dcnet)==0)
+# dcnet = delete.vertices(dcnet, Isolated)
+# l = l[-Isolated,]
+
+png(file=paste0(path_output,"/Figure_dcnet_cytokine_PTB.png"),res=900, units = 'in', width=7, height = 7)
+plot(dcnet,layout=l,
+     vertex.size=2,
+     vertex.label.cex = 0.5,
+     vertex.label.dist=0.5,
+     edge.width=1,
+     main = 'Differential co-expression network',
+     width=2,
+     layout.rotate = 100,
+     )
+
+dev.off()
+
+#########################################################################################
+sigf_lowCNIH4_mat <- lowCNIH4_mat
+sigf_lowCNIH4_mat[raw_p>=0.05] <- NA
+
+sigf_highCNIH4_mat <- highCNIH4_mat
+sigf_highCNIH4_mat[raw_p>=0.05] <- NA
+
+low_corr <- sigf_lowCNIH4_mat[upper.tri(sigf_lowCNIH4_mat,diag=F)]
+high_corr <- sigf_highCNIH4_mat[upper.tri(sigf_highCNIH4_mat,diag=F)]
+
+low_high <- data.frame(low_corr,high_corr)
+names(low_high) <- c('Low CNIH4','High CNIH4')
+
+low_high_long <- pivot_longer(low_high,colnames(low_high))
+names(low_high_long) <- c('CNIH4level','Coexpression')
+
+p5<-ggplot(data=low_high_long,
+       aes(x=fct_reorder(CNIH4level, Coexpression, .na_rm = TRUE,.desc =TRUE),
+           y=Coexpression)) +
+  theme_bw() +
+  geom_violin(aes(color=CNIH4level,fill=CNIH4level),
+              width=0.7,alpha=0.5,
+              trim=FALSE)+
+  scale_fill_manual(values=c("#B48EAD","#81A1C1"))+
+  scale_color_manual(values=c("#B48EAD","#81A1C1"))+
+  geom_boxplot(aes(color=CNIH4level),
+               size=1,
+               position=position_dodge(1),
+               width=0.2,
+               outlier.colour="red",
+               outlier.shape=NA,outlier.size=3)+
+    geom_jitter(aes(color=CNIH4level,fill=CNIH4level),
+              width=0.05,
+              height=0,
+              size=2,
+              alpha = 0.7)+
+  labs(x="",y = "Absolute pairwise coexpression", title = "")+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "none",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))+
+  stat_compare_means( size = 5,
+                      label.x = 1.3,
+                      label.y = 1.3)
+
+p5
+```
+
+## III. Perform DESEQ2
+
+```{r}
+
+vst_ptb_tbm
+```
+
+```{r}
+## Extract only the data for PTB cohort (28,29TB)
+PTB_sample_RNAseq <- All_sample_RNAseq %>% subset(Study %in% c("28TB","29TB"))
+count_data <-count_all[,rownames(PTB_sample_RNAseq)]
+
+```

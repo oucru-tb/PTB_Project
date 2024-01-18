@@ -243,6 +243,7 @@ clinical_2_discovery <- filter(clinical_2,cohort=='Discovery')
 rownames(clinical_2_discovery) <- clinical_2_discovery$LIMS_ID
 
 clinical_2_pcr <- filter(clinical_2,cohort=='Validation')
+
 # save(Fluidigm_PTB_wide,clinical_2,clinical_Fluidigm,file="Data/Fluidigm_PTB_data.Rdata")
 # save(RNA_data,clinical_RNA,clinical_2,file="Data/Most_variance_RNA_genes.Rdata")
 ```
@@ -896,11 +897,10 @@ grid.arrange(arrangeGrob(arrangeGrob(p1, p3,
              
              widths = c(4,0.5),
              ncol=2)
-
 dev.off()
 ```
 
-### 2. Scatter plot CNIH4 vs 25 ICs
+### 2. Scatter plot CNIH4 vs 27 ICs
 
 ```{r}
 library(ggpmisc)
@@ -973,7 +973,7 @@ p1<-ggplot(data=df, aes_string(x='CNIH4',y=as.name(colnames(df)[i])))+
   ggdraw(p1)
 }
 
-png(file=paste0(path_output,"/Figure4B_scatterplot_CNIH4vsICs_all_PTB.png"),res=600, units = 'in', width=45, height =18)#30:18
+png(file=paste0(path_output,"/Figure4B_scatterplot_CNIH4vsICs_all_PTB.png"),res=600, units = 'in', width=45, height =30)#30:18
 ggpubr::ggarrange(
 p[[1]],p[[2]],
 p[[3]],p[[4]],
@@ -989,7 +989,7 @@ p[[21]],p[[22]],
 p[[23]],p[[24]],
 p[[25]],p[[26]],
 p[[27]],
-ncol =9,nrow=3)
+ncol =6,nrow=5)
 dev.off()
 ```
 
@@ -1015,6 +1015,7 @@ highCNIH4vsIC_df <- vst_data2 %>% select(append(IC_names[1:27],'level')) %>% fil
 ```
 
 ```{r}
+
 library(dcanr)
 
 cor_method = 'spearman'
@@ -1285,7 +1286,7 @@ p<-ggplot(data=df,
   #geom_quasirandom(aes(color=CNIH4level),dodge.width=.8)+
   #scale_color_manual(values=c("#BF616A","#81A1C1"))+
   
-  labs(x="",y = "Absolute pairwise coexpression of \n26 immune checkpoint genes (p <0.05)", title = "")+
+  labs(x="",y = "Absolute pairwise coexpression of \n27 immune checkpoint genes (p <0.05)", title = "")+
   theme(plot.title = element_text(size = 25),
         legend.position = "none",
         legend.text = element_text(size = 20) ,
@@ -1318,6 +1319,10 @@ rownames(healthy_df) <- healthy_df$LIMS_ID
 PTB_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,trial_number=='MDR_PTB'|trial_number=='DS_PTB')$LIMS_ID)
 rownames(PTB_df) <- PTB_df$LIMS_ID
 
+
+TBM_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,(trial_number=='26TB'|trial_number=='27TB')&(Timepoint=='D0'))$LIMS_ID)
+rownames(TBM_df) <- TBM_df$LIMS_ID
+
 tmp1 <- merge(impute_df,healthy_df,by=0) %>% select(B.cells.naive:Neutrophils)
 dim(tmp1)
 tmp1 <- pivot_longer(tmp1,B.cells.naive:Neutrophils)
@@ -1328,14 +1333,27 @@ dim(tmp2)
 tmp2 <- pivot_longer(tmp2,B.cells.naive:Neutrophils)
 tmp2$group <- rep('PTB',each=dim(tmp2)[1])
 
-tmp<-rbind(tmp1,tmp2)
+tmp3 <- merge(impute_df,TBM_df,by=0) %>% select(B.cells.naive:Neutrophils)
+dim(tmp3)
+tmp3 <- pivot_longer(tmp3,B.cells.naive:Neutrophils)
+tmp3$group <- rep('TBM',each=dim(tmp3)[1])
+
+
+
+tmp<-rbind(tmp1,tmp2,tmp3)
+
+stat.test <- tmp %>%
+  group_by(name) %>% 
+  t_test(value ~ group) %>% 
+  add_significance("p") %>%
+  add_xy_position(x = "name")
 
 p <- ggplot(data=tmp,
-       aes(x=name,y=value, color=factor(group, level = c('Healthy','PTB'))))+
+       aes(x=name,y=value, color=factor(group, level = c('Healthy','PTB','TBM'))))+
   geom_boxplot() +
   geom_point(position=position_jitterdodge(jitter.width =0.3),
              alpha=0.1)+
-  scale_color_manual(values=c("#81A1C1","#B48EAD"))+
+  scale_color_manual(values=c("#81A1C1","#B48EAD","#A3BE8C"))+
   labs(color='Group')+ 
   xlab('Cell type')+
   ylab('% Cell population')+
@@ -1349,13 +1367,10 @@ p <- ggplot(data=tmp,
         axis.title.x = element_text(size = 20,color="black",face="bold"),
         axis.text.y=element_text(color="black",size=20),
         axis.title.y = element_text(size = 20,color="black",face="bold"),
-        axis.title= element_text(size = 40,color="black",face="bold"))
-stat.test <- tmp %>%
-  group_by(name) %>% 
-  t_test(value ~ group) %>%
-  add_xy_position(x = "name")
-p<- p + stat_pvalue_manual(stat.test, label = 'p', tip.length = 0)
-png(file=paste0(path_output,"/Figure_CellPop_HealthyvsPTB.png"),res=900, units = 'in', width=14, height = 9)
+        axis.title= element_text(size = 40,color="black",face="bold")) +
+  stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
+
+png(file=paste0(path_output,"/Figure_CellPop_HealthyvsPTBvsTBM.png"),res=900, units = 'in', width=17, height = 9)
 p
 dev.off()
 ```
@@ -1388,6 +1403,12 @@ png(file=paste0(path_output,"/Figure_CellPop_All.png"),res=900, units = 'in', wi
 p
 dev.off()
 
+stat.test <- tmp %>%
+  group_by(name) %>% 
+  t_test(value ~ level) %>% 
+  add_significance("p") %>%
+  add_xy_position(x = "name")
+
 p <- ggplot(data=tmp,
        aes(x=name,y=value, color=factor(level, level = c('LOW','HIGH'))))+
   geom_boxplot() +
@@ -1407,9 +1428,10 @@ p <- ggplot(data=tmp,
         axis.title.x = element_text(size = 20,color="black",face="bold"),
         axis.text.y=element_text(color="black",size=20),
         axis.title.y = element_text(size = 20,color="black",face="bold"),
-        axis.title= element_text(size = 40,color="black",face="bold"))
+        axis.title= element_text(size = 40,color="black",face="bold")) +
+  stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
 
-png(file=paste0(path_output,"/Figure_CellPop_LowvsHighCNIH4.png"),res=900, units = 'in', width=14, height = 9)
+png(file=paste0(path_output,"/Figure_CellPop_LowvsHighCNIH4_PTB.png"),res=900, units = 'in', width=14, height = 9)
 p
 dev.off()
 ```
@@ -1421,8 +1443,7 @@ library(ggpubr)
 require(plyr)
 library(ggbeeswarm)
 
-
-tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/ICs/CIBERSORTxHiRes_NA_Monocytes_Window40.txt'),sep='\t')
+tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/ICs/CIBERSORTxHiRes_NA_Neutrophils_Window40.txt'),sep='\t')
 rownames(tmp0) <- tmp0$GeneSymbol
 tmp0$GeneSymbol <- NULL
 tmp0 <- t(tmp0) %>% as.data.frame() %>% dplyr::rename(CNIH4InNeutrophils = CNIH4)
@@ -1703,7 +1724,7 @@ df <- tbm_vst %>%select(IC_names) %>% dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
 
 p<-list()
 
-for(i in 1:26){
+for(i in 1:27){
 p1<-ggplot(data=df, aes_string(x='CNIH4',y=as.name(colnames(df)[i])))+
   geom_point(alpha=0.2,col='red')+
   theme_bw()+
@@ -1727,7 +1748,7 @@ p1<-ggplot(data=df, aes_string(x='CNIH4',y=as.name(colnames(df)[i])))+
   ggdraw(p1)
 }
 
-png(file=paste0(path_output,"/Figure4B_scatterplot_CNIH4vsICs_all_TBM.png"),res=600, units = 'in', width=45, height =18)
+png(file=paste0(path_output,"/Figure4B_scatterplot_CNIH4vsICs_all_TBM.png"),res=600, units = 'in', width=45, height =30)
 ggpubr::ggarrange(
 p[[1]],p[[2]],
 p[[3]],p[[4]],
@@ -1741,8 +1762,8 @@ p[[17]],p[[18]],
 p[[19]],p[[20]],
 p[[21]],p[[22]],
 p[[23]],p[[24]],
-p[[25]],p[[26]],p[[27]]
-ncol =9,nrow=3)
+p[[25]],p[[26]],p[[27]],
+ncol =6,nrow=5)
 dev.off()
 ```
 
@@ -1756,19 +1777,32 @@ TBM_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,(trial
 
 tmp <- TBM_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
 rownames(tmp) <- TBM_df$LIMS_ID
-table(tmp$level) # 244 52
+table(tmp$level) # 241 40
 tbm_vst2<-merge(tbm_vst,tmp[,2, drop=FALSE],by=0)
 rownames(tbm_vst2) <- tbm_vst2$LIMS_ID
-dim(tbm_vst2) # 295 31427
-```
+tbm_vst2$Row.names <- NULL
 
-```{r}
-lowCNIH4vsIC_df <- tbm_vst2 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='LOW') %>% select(-level)
-highCNIH4vsIC_df <- tbm_vst2 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='HIGH') %>% select(-level)
+tmp <-  read.csv(paste0(path_input,'Raw_data/data_3genes_Xray_select_17_JAN_2024.csv')) # check if TBM contain PTB
+tmp$PTB_group[is.na(tmp$PTB_group)] <- 'NA'
+tmp <- filter(tmp, grepl('26TB|27TB', ID)) %>% select(c('LIMS_ID','PTB_group'))
+rownames(tmp)<-tmp$LIMS_ID
+tmp$LIMS_ID <- NULL
+tbm_vst2 <- merge(tbm_vst2,tmp,by=0)
+rownames(tbm_vst2) <- tbm_vst2$LIMS_ID
+tbm_vst2$Row.names <- NULL
+dim(tbm_vst2) # 281 31391
 ```
 
 ```{r}
 library(dcanr)
+tmp0 <- tbm_vst2# ALL
+#tmp0 <- filter(tbm_vst2,PTB_group=='NA') # NA group
+#tmp0 <- filter(tbm_vst2,PTB_group=='TBM without PTB') # NA group
+#tmp0 <- filter(tbm_vst2,PTB_group=='TBM with PTB') # NA group
+
+lowCNIH4vsIC_df <- tmp0 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='LOW') %>% select(-level)
+highCNIH4vsIC_df <- tmp0 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='HIGH') %>% select(-level)
+
 cor_method = 'spearman'
 ICvslowCNIH4_mat <- cor(lowCNIH4vsIC_df,
                       use='pairwise.complete.obs',
@@ -1788,8 +1822,8 @@ p.ICvshighCNIH4_mat <- cor.pval.test(highCNIH4vsIC_df,
                                   method=cor_method, 
                                   use='pairwise.complete.obs')
 
-emat <- t(tbm_vst2%>%select(IC_names[1:27])) #tranpose, 23+1
-condition <- tbm_vst2$level # high and low
+emat <- t(tmp0%>%select(IC_names[1:27])) #tranpose, 27
+condition <- tmp0$level # high and low
 scores <- dcScore(emat,
                   condition,
                   dc.method = "zscore",
@@ -1797,6 +1831,8 @@ scores <- dcScore(emat,
 
 raw_p <- dcTest(scores, emat, condition)
 adj_p <- dcAdjust(raw_p, f = p.adjust, method = 'fdr')
+
+
 ```
 
 #### 3.1. Differential Coexpression Heatmap
@@ -1882,9 +1918,9 @@ p3 <- ggcorrplot(scores[,27:1],
                                 title.position = "right",size=15,
                                 barheight = 40))
 
-png(file=paste0(path_output,"/Figure4C_differential_coexpression_heatmap_TBM.png"),res=600, units = 'in', width=20, height =10)
+# png(file=paste0(path_output,"/Figure4C_differential_coexpression_heatmap_TBM_NA_PTB.png"),res=600, units = 'in', width=20, height =10)
 plot_grid(p12,p3, align = "h", ncol = 2, rel_widths = c(1/5, 1/5))
-dev.off()
+# dev.off()
 ```
 
 #### 3.2. Differential Coexpression Network
@@ -1894,17 +1930,16 @@ library(igraph)
 library(qgraph)
 
 set.seed(123)
-dcnet <- dcNetwork(scores,
-                   raw_p,
-                   thresh=0.05)
+dcnet <- dcNetwork(scores, adj_p,0.5)
+plot(dcnet, vertex.label = '')
 
 e <- get.edgelist(dcnet,names=FALSE)
 l <- qgraph.layout.fruchtermanreingold(e,
                                        vcount=vcount(dcnet),
-                                       area=8*(vcount(dcnet)^2),
+                                       area=7.5*(vcount(dcnet)^2),
                                        repulse.rad=(vcount(dcnet)^3.3)
                                        )
-png(file=paste0(path_output,"/Figure4C_differential_coexpression_network_TBM.png"),res=900, units = 'in', width=6.5, height = 6.5)
+# png(file=paste0(path_output,"/Figure4C_differential_coexpression_network_TBM.png"),res=900, units = 'in', width=6.5, height = 6.5)
 
 plot(dcnet,layout=l,
      vertex.size=2,
@@ -1915,7 +1950,7 @@ plot(dcnet,layout=l,
      width=2,
      layout.rotate = 100
      )
-dev.off()
+# dev.off()
 ```
 
 #### 3.4 Boxplot
@@ -1924,8 +1959,8 @@ dev.off()
 library(dcanr)
 library(ggpubr)
 
-emat <- t(tbm_vst2%>%select(IC_names[1:26])) #tranpose
-condition <- tbm_vst2$level # high and low
+emat <- t(tmp0%>%select(IC_names[1:27])) #tranpose
+condition <- tmp0$level # high and low
 scores <- dcScore(emat, 
                   condition,
                   dc.method = "zscore",
@@ -1949,10 +1984,10 @@ df <- pivot_longer(low_high,colnames(low_high))
 names(df) <- c('CNIH4level','Coexpression')
 
 p<-ggplot(data=df,
-       aes(x=reorder(CNIH4level, Coexpression, na.rm = TRUE),
+       aes(x=fct_reorder(CNIH4level, Coexpression, .na_rm = TRUE,.desc =TRUE),
            y=Coexpression)) +
-  theme_bw() +
-  geom_violin(aes(color=CNIH4level,fill=CNIH4level),
+  geom_violin(aes(color=CNIH4level,
+                  fill=CNIH4level),
               width=0.7,alpha=0.5,
               trim=FALSE)+
   scale_fill_manual(values=c("#B48EAD","#81A1C1"))+
@@ -1960,7 +1995,7 @@ p<-ggplot(data=df,
   geom_boxplot(aes(color=CNIH4level),
                size=1,
                position=position_dodge(1),
-               width=0.2,
+               width=0.03,
                outlier.colour="red",
                outlier.shape=NA,outlier.size=3)+
     geom_jitter(aes(color=CNIH4level,fill=CNIH4level),
@@ -1968,10 +2003,11 @@ p<-ggplot(data=df,
               height=0,
               size=2,
               alpha = 0.7)+
+  theme_bw() +
   #geom_quasirandom(aes(color=CNIH4level),dodge.width=.8)+
   #scale_color_manual(values=c("#BF616A","#81A1C1"))+
   
-  labs(x="",y = "Absolute pairwise coexpression of \n26 immune checkpoint genes (p <0.05)", title = "")+
+  labs(x="",y = "Absolute pairwise coexpression of \n27 immune checkpoint genes (p <0.05)", title = "")+
   theme(plot.title = element_text(size = 25),
         legend.position = "none",
         legend.text = element_text(size = 20) ,
@@ -1986,12 +2022,125 @@ p<-ggplot(data=df,
                       size = 5,
                       label.x = 1.3,
                       label.y = 1.3)
-
-
 p
-
-
-# png(file=paste0(path_output,"/Figure4C_differential_coexpression_boxplot_TBM.png"),res=900, units = 'in', width=8, height = 7)
+# png(file=paste0(path_output,"/Figure4C_differential_coexpression_boxplot_TBM_with_PTB.png"),res=900, units = 'in', width=8, height = 7)
 # p
 # dev.off()
+```
+
+### 4. Boxplot Low vs high TBM
+
+```{r}
+tmp <- merge(impute_df,tbm_vst2,by=0) %>% select(c(B.cells.naive:Neutrophils,level))
+tmp <- pivot_longer(tmp,B.cells.naive:Neutrophils)
+
+p<-ggplot(data=tmp,
+       aes(x=name,y=value))+
+  geom_boxplot(aes(color=name)) +
+  geom_jitter(height=0,aes(color=name),alpha=0.1)+
+  xlab('Cell type')+
+  ylab('% Cell population')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))
+p
+png(file=paste0(path_output,"/Figure_CellPop_All.png"),res=900, units = 'in', width=14, height = 9)
+p
+dev.off()
+
+stat.test <- tmp %>%
+  group_by(name) %>% 
+  t_test(value ~ level) %>% 
+  add_significance("p") %>%
+  add_xy_position(x = "name")
+
+p <- ggplot(data=tmp,
+       aes(x=name,y=value, color=factor(level, level = c('LOW','HIGH'))))+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),
+             alpha=0.1)+
+  scale_color_manual(values=c("#81A1C1","#B48EAD"))+
+  labs(color='CNIH4 Level')+ 
+  xlab('Cell type')+
+  ylab('% Cell population')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))+
+  stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
+
+png(file=paste0(path_output,"/Figure_CellPop_LowvsHighCNIH4_TBM.png"),res=900, units = 'in', width=14, height = 9)
+p
+dev.off()
+```
+
+### 5. Boxplot CIBERSORT
+
+```{r}
+library(ggpubr)
+require(plyr)
+library(ggbeeswarm)
+
+tmp0 <- read.csv(paste0(path_input,'Raw_data/LM22_ref_CNIH4/ICs/CIBERSORTxHiRes_NA_Neutrophils_Window40.txt'),sep='\t')
+rownames(tmp0) <- tmp0$GeneSymbol
+tmp0$GeneSymbol <- NULL
+tmp0 <- t(tmp0) %>% as.data.frame() %>% dplyr::rename(CNIH4InNeutrophils = CNIH4)
+
+lowCNIH4_neutrophils <- merge(lowCNIH4vsIC_df,tmp0,by=0)
+highCNIH4_neutrophils <- merge(highCNIH4vsIC_df,tmp0,by=0)
+CNIH4lv_neutrophils <- merge(tbm_vst2,tmp0,by=0)[,c('CNIH4InNeutrophils','level')]
+CNIH4lv_neutrophils$level <- mapvalues(CNIH4lv_neutrophils$level, 
+                                        from=c('LOW',"HIGH"), 
+                                        to=c("Low CNIH4","High CNIH4"))
+
+p<-ggplot(data=CNIH4lv_neutrophils,
+       aes(x=reorder(level, CNIH4InNeutrophils,na.rm = TRUE),
+           y=CNIH4InNeutrophils)) +
+  theme_bw() +
+  scale_fill_manual(values=c("#B48EAD","#81A1C1"))+
+  scale_color_manual(values=c("#B48EAD","#81A1C1"))+
+  geom_boxplot(aes(color=level),
+               size=1,
+               position=position_dodge(1),
+               width=0.5,
+               outlier.colour="red",
+               outlier.shape=NA,outlier.size=3,
+               varwidth=TRUE
+               )+
+  geom_beeswarm(aes(color=level),priority='density',size=1,alpha=0.5,cex = 1,
+                corral.width = 0.1)+
+  labs(x="",y = "CNIH4 expression in Neutrophils", title = "")+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "none",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))+
+  stat_compare_means( #aes(label = paste0("p = ", ..p.format..)),
+                      size = 5,
+                      label.x = 1.3,
+                      label.y = 250)#220
+
+png(file=paste0(path_output,"/Figure_HighvsLowCNIH4InNeutrophils_CNIH4_TBM.png"),res=900, units = 'in', width=5, height = 7)
+p
+dev.off()
 ```
