@@ -20,6 +20,7 @@ mcore<-1 # for Window PC
 
 #Load libraries
 library(dplyr)
+library(plyr)
 library(readxl)
 library(writexl)
 library(survival)
@@ -57,9 +58,11 @@ load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
 load(paste0(path_input, "Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
 All_sample_RNAseq <- readxl::read_excel(paste0(path_input,"Raw_data/All_sample_RNAseq.xlsx"),sheet = "Run1and2") %>% as.data.frame()
 rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
+
 ```
 
 ```{r}
+
 vst_ptb_tbm <- rbind.fill(vst_data,tbm_vst)
 vst_ptb_tbm %<>% mutate(Type=ifelse(LIMS_ID %in% vst_data$LIMS_ID,"PTB","TBM"))
 #rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
@@ -74,7 +77,41 @@ vst_ptb_tbm <- merge(vst_ptb_tbm,PTB_TBM_ComBat %>% select('LIMS_ID','CNIH4level
 rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
 ```
 
-### Draft analysis - Playground
+## 2. Define helper functions
+
+```{r}
+
+cor.pval.test <- function(x1, x2, ...) {
+  r <- ncol(x1)
+  n <- ncol(x2)
+  p.mat<- matrix(NA, r, n)
+  for (i in 1:r) {
+    for (j in 1:n) {
+      tmp <- cor.test(x1[, i], x2[, j], ...)
+      p.mat[i, j] <- tmp$p.value
+    }
+  }
+  rownames(p.mat) <-  colnames(x1)
+  colnames(p.mat) <- colnames(x2)
+  return(p.mat)
+}
+
+anno_gene_symbol <- function(data,data_anno,export, name=NULL){
+  anno_DESeq2 <- data_anno[,c("gene_id", "gene_symbol")]
+  anno_DESeq2 <- subset(anno_DESeq2, gene_id %in% data$gene_id)
+  data
+  return(data)
+}
+
+get_genelist_pathway_kegg <- function(hsa_ID){
+  library("KEGGREST")
+  names <- keggGet(hsa_ID)[[1]]$GENE
+  namesodd <-  names[seq(0,length(names),2)]
+  namestrue <- gsub("\\;.*","",namesodd)
+}
+```
+
+## \*Draft analysis - Playground
 
 ```{r}
 library(ggplot2)
@@ -120,6 +157,7 @@ ggplot(data=df, aes_string(x='CNIH4',y=as.name('CD274_CD58')))+
 ```
 
 ```{r}
+library(gtsummary)
 df <- filter(vst_ptb_tbm,Type=='PTB')
 df %<>% mutate(Neutrophil_counts=WBC*NEUTLE*0.01,
                      log2_Neutrophil_counts=log2(Neutrophil_counts),
@@ -130,49 +168,57 @@ df %<>% mutate(Neutrophil_counts=WBC*NEUTLE*0.01,
                      Eosinophil_counts=WBC*EOSLE*0.01,
                      log2_Eosinophil_counts=log2(Eosinophil_counts))
 
-impute_df <-  read.csv(paste0(path_input,'/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt'),sep='\t')
+model1 <- lm(CNIH4~CT_mean, data = df)
+tbl_regression(model1,intercept = TRUE,estimate_fun = purrr::partial(style_ratio, digits = 3)) %>%
+  bold_labels() %>%
+  modify_column_unhide(columns = c(statistic, std.error)) %>% as_flex_table() %>%
+  flextable::save_as_docx(path=paste0(path_output,"/lm_CNIH4vsCT_mean.docx"))
 
-model <- lm(CNIH4~Lymphocyte_counts+Monocyte_counts+Neutrophil_counts+Lymphocyte_counts+CD274, data = df)
-summary(model)
-```
+model2 <- lm(CNIH4~CT_mean+Neutrophil_counts+Lymphocyte_counts+Monocyte_counts + Eosinophil_counts +CD274,data=df)
+tbl_regression(model2,intercept = TRUE,estimate_fun = purrr::partial(style_ratio, digits = 3)) %>%
+  bold_labels() %>%
+  modify_column_unhide(columns = c(statistic, std.error)) %>% as_flex_table() %>%
+  flextable::save_as_docx(path=paste0(path_output,"/lm_CNIH4vsAll.docx"))
 
-## 2. Define helper functions
-
-```{r}
-
-get_genelist_pathway_kegg <- function(hsa_ID){
-  library("KEGGREST")
-  names <- keggGet(hsa_ID)[[1]]$GENE
-  namesodd <-  names[seq(0,length(names),2)]
-  namestrue <- gsub("\\;.*","",namesodd)
-}
-
-cor.pval.test <- function(x1, x2, ...) {
-  r <- ncol(x1)
-  n <- ncol(x2)
-  p.mat<- matrix(NA, r, n)
-  for (i in 1:r) {
-    for (j in 1:n) {
-      tmp <- cor.test(x1[, i], x2[, j], ...)
-      p.mat[i, j] <- tmp$p.value
-    }
-  }
-  rownames(p.mat) <-  colnames(x1)
-  colnames(p.mat) <- colnames(x2)
-  return(p.mat)
-}
 ```
 
 ## 3. Analysis
 
-### 3.1. Differential Co-expression 121 gen in Low and High CNIH4 in PTB
+### Regression Analysis
+
+```{r}
+library(gtsummary)
+df <- filter(vst_ptb_tbm,Type=='PTB')
+df %<>% mutate(Neutrophil_counts=WBC*NEUTLE*0.01,
+                     log2_Neutrophil_counts=log2(Neutrophil_counts),
+                     Lymphocyte_counts=WBC*LYMLE *0.01,
+                     log2_Lymphocyte_counts=log2(Lymphocyte_counts),
+                     Monocyte_counts=WBC*MONOLE*0.01,
+                     log2_Monocyte_counts=log2(Monocyte_counts),
+                     Eosinophil_counts=WBC*EOSLE*0.01,
+                     log2_Eosinophil_counts=log2(Eosinophil_counts))
+
+model1 <- lm(CNIH4~CT_mean, data = df)
+tbl_regression(model1,intercept = TRUE,estimate_fun = purrr::partial(style_ratio, digits = 3)) %>%
+  bold_labels() %>%
+  modify_column_unhide(columns = c(statistic, std.error)) %>% as_flex_table() %>%
+  flextable::save_as_docx(path=paste0(path_output,"/lm_CNIH4vsCT_mean.docx"))
+
+model2 <- lm(CNIH4~CT_mean+Neutrophil_counts+Lymphocyte_counts+Monocyte_counts + Eosinophil_counts +CD274,data=df)
+tbl_regression(model2,intercept = TRUE,estimate_fun = purrr::partial(style_ratio, digits = 3)) %>%
+  bold_labels() %>%
+  modify_column_unhide(columns = c(statistic, std.error)) %>% as_flex_table() %>%
+  flextable::save_as_docx(path=paste0(path_output,"/lm_CNIH4vsAll.docx"))
+```
+
+### Differential Co-expression
 
 ```{r}
 library(dcanr)
 
 #TCR_gene_list <-get_genelist_pathway_kegg('hsa04660')
 
-TCR_gene_list <- c('TNFSF12','TSLP','TNFSF10','OSM','CSF1','LTA','IL33','IL27','IL18','IL17F','IL17A','IL15','IL13','CXCL8','IL7','IL6','IL4','IL2','CSF2','CSF3','FLT3LG','IL12A', 'IL12B', 'IL10', 'IL1B','IL6','IL4','IFNG','TNF')
+TCR_gene_list <-c('TNFSF12','TSLP','TNFSF10','OSM','CSF1','LTA','IL33','IL27','IL18','IL17F','IL17A','IL15','IL13','CXCL8','IL7','IL6','IL4','IL2','CSF2','CSF3','FLT3LG','IL12A', 'IL12B', 'IL10', 'IL1B','IL6','IL4','IFNG','TNF') 
 
 TCR_df <- vst_ptb_tbm %>% select(any_of(c(TCR_gene_list,'Type','CNIH4level'))) # Columns `PAK5`, `BUB1B-PAK6`, `IL2`, and `CSF2` don't exist.
 colSums(is.na(TCR_df)) #Check NA
@@ -380,16 +426,90 @@ p5<-ggplot(data=low_high_long,
 p5
 ```
 
-## III. Perform DESEQ2
+### DESEQ2
 
 ```{r}
+library(EnhancedVolcano)
 
-vst_ptb_tbm
+df <- filter(vst_ptb_tbm,Type=='PTB')%>% select(c('LIMS_ID','CNIH4level'))
+PTB_sample_RNAseq <- All_sample_RNAseq %>% subset(Study %in% c("28TB","29TB"))
+count_data <-count_all[,rownames(PTB_sample_RNAseq)]
+count_data<-count_data[ , !(names(count_data) %in% c('HOA7818A92'))] # drop 1 patients not in vst
+
+
+df<- df[order(df$LIMS_ID),] #col
+df$CNIH4level<-factor(df$CNIH4level,levels=c("LOW","HIGH"))
+df$LIMS_ID<-NULL
+
+count_data<-count_data[ , order(names(count_data))]
+anno_symbol <- anno[,c("gene_id", "gene_symbol")] %>% filter(gene_id %in% rownames(count_data))
+rownames(anno_symbol) <- anno_symbol$gene_id
+anno_symbol <- anno_symbol[rownames(count_data),]
+count_data <- cbind(genenames=anno_symbol$gene_symbol,count_data)
+count_data <-count_data %>% filter(genenames %in% names(RNA_data))
+count_data$genenames<-NULL
+anno_symbol <- anno[,c("gene_id", "gene_symbol")] %>% filter(gene_id %in% rownames(count_data))
+
+dup_genes_id <- anno_symbol[duplicated(anno_symbol$gene_symbol), ]$gene_id
+count_data <- count_data[!(rownames(count_data) %in% dup_genes_id),]
+
+dds <- DESeqDataSetFromMatrix(count_data, colData=df, ~CNIH4level)
+dds <- DESeq(dds)
+
+res1 <- results(dds,name = 'CNIH4level_HIGH_vs_LOW')
+res2 <- lfcShrink(dds, coef="CNIH4level_HIGH_vs_LOW", type="apeglm")
+
+labels <- mapvalues(rownames(res1), 
+          from=anno_symbol$gene_id, 
+          to=anno_symbol$gene_symbol)
+
+EnhancedVolcano(res1,
+    lab = labels,
+    x = 'log2FoldChange',labSize = 2.0,
+    y = 'pvalue',
+    selectLab = c('TNFSF12','TSLP','TNFSF10','OSM','CSF1','LTA','IL33','IL27','IL18','IL17F','IL17A','IL15','IL13','CXCL8','IL7','IL6','IL4','IL2','CSF2','CSF3','FLT3LG','IL12A', 'IL12B', 'IL10', 'IL1B','IL6','IL4','IFNG','TNF'),
+    )
+```
+
+```{r}
+dim(All_sample_RNAseq)
+describe(All_sample_RNAseq$Study)
+All_sample_RNAseq<-All_sample_RNAseq %>%  mutate (Study=ifelse(Study=="HV","43TB",Study))
+table(All_sample_RNAseq$timepoint)
+
+All_sample_RNAseq_T0<-All_sample_RNAseq %>% subset(timepoint=="D0" & Study %in% c("19EI","26TB","27TB","28TB","29TB","43TB"))
+
+table(All_sample_RNAseq_T0$Study)
+
+All_sample_RNAseq_T0$Study<-factor(All_sample_RNAseq_T0$Study,levels=c("19EI","26TB","27TB","28TB","29TB","43TB"))
+
+sample_names<-All_sample_RNAseq_T0$LIMS_ID
+
+count_deseq2 <-count_all[,c(sample_names)]
+dim(count_deseq2)
+
+dds_r <- DESeqDataSetFromMatrix(count_deseq2[,1:100], colData=All_sample_RNAseq_T0[1:100,], ~Study)
+## annotate dds and res
+dds_anno <- anno_gene_symbol(data = dds_r,data_anno = anno,export = F,name = NULL)
+
+tmp <- DESeq(dds_anno)
+resultsNames(tmp)
+results(tmp)
 ```
 
 ```{r}
 ## Extract only the data for PTB cohort (28,29TB)
 PTB_sample_RNAseq <- All_sample_RNAseq %>% subset(Study %in% c("28TB","29TB"))
 count_data <-count_all[,rownames(PTB_sample_RNAseq)]
+dim(count_data)
 
+df <- filter(vst_ptb_tbm,Type=='PTB')
+View(df)
+
+
+
+View(count_data)
+dds <- DESeq(dds)
+res <- results(dds)
+res
 ```
