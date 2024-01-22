@@ -1589,10 +1589,11 @@ p01
 row.order <- p01$tree_row$order
 col.order <- p01$tree_col$order
 p1 <- as.ggplot(p01)
+p1
 ```
 
 ```{r}
-Cell_names <- c("Neutrophil_counts","Lymphocyte_counts", "Monocyte_counts", "Eosinophil_counts")
+Cell_names <- c("Neutrophil_counts","Monocyte_counts","Lymphocyte_counts",  "Eosinophil_counts")
 
 ICvsCNIH4_df <- tbm_vst %>% select(append(IC_names,Cell_names))
 ICvsCNIH4_df <- ICvsCNIH4_df[vapply(ICvsCNIH4_df, 
@@ -1643,13 +1644,14 @@ p02 <- pheatmap(vals1,
                breaks=myBreaks,
                display_numbers=labels1,
                cluster_cols=F,
+               cluster_rows=T,
                show_colnames = T,legend = F)
 
 p1 <- as.ggplot(p01)
 p2 <- as.ggplot(p02)
 p3 <- ggplot() + theme_void()
 # CellCounts
-
+p2
 png(file=paste0(path_output,"/Figure4A_CorrelationHeatmap_CNIH4vsICs_TBM.png"),res=900, units = 'in',
     width = 10,
     height =10,)
@@ -1664,7 +1666,7 @@ dev.off()
 
 # CellCounts combined
 k = 0.996
-png(file=paste0(path_output,"/Figure4A_CorrelationHeatmap_CNIH4vsICsvsCellCounts_TBM_combine.png"),res=600, units = 'in',
+png(file=paste0(path_output,"/Figure4A_CorrelationHeatmap_CNIH4vsICsvsCellCounts_TBM_combine1.png"),res=600, units = 'in',
     width = 12,
     height =12,)
 grid.arrange(arrangeGrob(arrangeGrob(p1, p3,
