@@ -1001,17 +1001,25 @@ qt<-quantile(healthy_df$CNIH4,c(0.75)) #Q3 CNIH4 of healthy control
 
 PTB_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,trial_number=='MDR_PTB'|trial_number=='DS_PTB')$LIMS_ID)
 
-tmp <- PTB_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
+# tmp <- PTB_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
+
+tmp <- PTB_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),1,2))
+
 rownames(tmp) <- PTB_df$LIMS_ID
 table(tmp$level) # 244 52
 vst_data2<-merge(vst_data,tmp[,2, drop=FALSE],by=0)
 rownames(vst_data2) <- vst_data2$LIMS_ID
 dim(vst_data2) # 295 31427
+
 ```
 
 ```{r}
-lowCNIH4vsIC_df <- vst_data2 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='LOW') %>% select(-level)
-highCNIH4vsIC_df <- vst_data2 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='HIGH') %>% select(-level)
+# lowCNIH4vsIC_df <- vst_data2 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='LOW') %>% select(-level)
+# highCNIH4vsIC_df <- vst_data2 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='HIGH') %>% select(-level)
+
+lowCNIH4vsIC_df <- vst_data2 %>% select(append(IC_names[1:27],'level')) %>% filter(level==1) %>% select(-level)
+highCNIH4vsIC_df <- vst_data2 %>% select(append(IC_names[1:27],'level')) %>% filter(level==2) %>% select(-level)
+
 ```
 
 ```{r}
@@ -1302,9 +1310,9 @@ p<-ggplot(data=df,
                       label.x = 1.3,
                       label.y = 1.3)
 
-png(file=paste0(path_output,"/Figure4C_differential_coexpression_boxplot_PTB.png"),res=900, units = 'in', width=8, height = 7)
+# png(file=paste0(path_output,"/Figure4C_differential_coexpression_boxplot_PTB.png"),res=900, units = 'in', width=8, height = 7)
 p
-dev.off()
+# dev.off()
 ```
 
 ### 4.0. PTB vs Health vs (TBM)
@@ -1775,7 +1783,10 @@ qt<-quantile(healthy_df$CNIH4,c(0.75)) #Q3 CNIH4 of healthy control
 
 TBM_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,(trial_number=='26TB'|trial_number=='27TB')&(Timepoint=='D0'))$LIMS_ID)
 
-tmp <- TBM_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
+# tmp <- TBM_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
+
+tmp <- TBM_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),1,2))
+
 rownames(tmp) <- TBM_df$LIMS_ID
 table(tmp$level) # 241 40
 tbm_vst2<-merge(tbm_vst,tmp[,2, drop=FALSE],by=0)
@@ -1800,8 +1811,11 @@ tmp0 <- tbm_vst2# ALL
 #tmp0 <- filter(tbm_vst2,PTB_group=='TBM without PTB') # NA group
 #tmp0 <- filter(tbm_vst2,PTB_group=='TBM with PTB') # NA group
 
-lowCNIH4vsIC_df <- tmp0 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='LOW') %>% select(-level)
-highCNIH4vsIC_df <- tmp0 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='HIGH') %>% select(-level)
+# lowCNIH4vsIC_df <- tmp0 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='LOW') %>% select(-level)
+# highCNIH4vsIC_df <- tmp0 %>% select(append(IC_names[1:27],'level')) %>% filter(level=='HIGH') %>% select(-level)
+
+lowCNIH4vsIC_df <- tmp0 %>% select(append(IC_names[1:27],'level')) %>% filter(level==1) %>% select(-level)
+highCNIH4vsIC_df <- tmp0 %>% select(append(IC_names[1:27],'level')) %>% filter(level==2) %>% select(-level)
 
 cor_method = 'spearman'
 ICvslowCNIH4_mat <- cor(lowCNIH4vsIC_df,
@@ -1918,9 +1932,9 @@ p3 <- ggcorrplot(scores[,27:1],
                                 title.position = "right",size=15,
                                 barheight = 40))
 
-# png(file=paste0(path_output,"/Figure4C_differential_coexpression_heatmap_TBM_NA_PTB.png"),res=600, units = 'in', width=20, height =10)
+png(file=paste0(path_output,"/Figure4C_differential_coexpression_heatmap_TBM_NA_PTB.png"),res=600, units = 'in', width=20, height =10)
 plot_grid(p12,p3, align = "h", ncol = 2, rel_widths = c(1/5, 1/5))
-# dev.off()
+dev.off()
 ```
 
 #### 3.2. Differential Coexpression Network
@@ -1930,7 +1944,7 @@ library(igraph)
 library(qgraph)
 
 set.seed(123)
-dcnet <- dcNetwork(scores, adj_p,0.5)
+dcnet <- dcNetwork(scores, raw_p,0.05)
 plot(dcnet, vertex.label = '')
 
 e <- get.edgelist(dcnet,names=FALSE)
@@ -1939,7 +1953,7 @@ l <- qgraph.layout.fruchtermanreingold(e,
                                        area=7.5*(vcount(dcnet)^2),
                                        repulse.rad=(vcount(dcnet)^3.3)
                                        )
-# png(file=paste0(path_output,"/Figure4C_differential_coexpression_network_TBM.png"),res=900, units = 'in', width=6.5, height = 6.5)
+png(file=paste0(path_output,"/Figure4C_differential_coexpression_network_TBM.png"),res=900, units = 'in', width=6.5, height = 6.5)
 
 plot(dcnet,layout=l,
      vertex.size=2,
@@ -1950,7 +1964,7 @@ plot(dcnet,layout=l,
      width=2,
      layout.rotate = 100
      )
-# dev.off()
+dev.off()
 ```
 
 #### 3.4 Boxplot
@@ -1959,14 +1973,14 @@ plot(dcnet,layout=l,
 library(dcanr)
 library(ggpubr)
 
-emat <- t(tmp0%>%select(IC_names[1:27])) #tranpose
-condition <- tmp0$level # high and low
-scores <- dcScore(emat, 
-                  condition,
-                  dc.method = "zscore",
-                  cor.method = 'spearman')
-raw_p <- dcTest(scores, emat, condition)
-adj_p <- dcAdjust(raw_p, f = p.adjust, method = 'fdr')
+# emat <- t(tmp0%>%select(IC_names[1:27])) #tranpose
+# condition <- tmp0$level # high and low
+# scores <- dcScore(emat, 
+#                   condition,
+#                   dc.method = "zscore",
+#                   cor.method = 'spearman')
+# raw_p <- dcTest(scores, emat, condition)
+# adj_p <- dcAdjust(raw_p, f = p.adjust, method = 'fdr')
 
 sigf_ICvslowCNIH4_mat <- ICvslowCNIH4_mat
 sigf_ICvslowCNIH4_mat[raw_p>=0.05] <- NA
