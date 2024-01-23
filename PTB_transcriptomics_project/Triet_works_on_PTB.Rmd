@@ -1389,27 +1389,27 @@ dev.off()
 tmp <- merge(impute_df,vst_data2,by=0) %>% select(c(B.cells.naive:Neutrophils,level))
 tmp <- pivot_longer(tmp,B.cells.naive:Neutrophils)
 
-p<-ggplot(data=tmp,
-       aes(x=name,y=value))+
-  geom_boxplot(aes(color=name)) +
-  geom_jitter(height=0,aes(color=name),alpha=0.1)+
-  xlab('Cell type')+
-  ylab('% Cell population')+
-  theme_bw()+
-  theme(plot.title = element_text(size = 25),
-        legend.position = "",
-        legend.text = element_text(size = 20) ,
-        legend.title  = element_text(size = 20,color="black",face="bold"),
-        axis.text = element_text(size = 25),
-        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
-        axis.title.x = element_text(size = 20,color="black",face="bold"),
-        axis.text.y=element_text(color="black",size=20),
-        axis.title.y = element_text(size = 20,color="black",face="bold"),
-        axis.title= element_text(size = 40,color="black",face="bold"))
-  
-png(file=paste0(path_output,"/Figure_CellPop_All.png"),res=900, units = 'in', width=14, height = 9)
-p
-dev.off()
+# p<-ggplot(data=tmp,
+#        aes(x=name,y=value))+
+#   geom_boxplot(aes(color=name)) +
+#   geom_jitter(height=0,aes(color=name),alpha=0.1)+
+#   xlab('Cell type')+
+#   ylab('% Cell population')+
+#   theme_bw()+
+#   theme(plot.title = element_text(size = 25),
+#         legend.position = "",
+#         legend.text = element_text(size = 20) ,
+#         legend.title  = element_text(size = 20,color="black",face="bold"),
+#         axis.text = element_text(size = 25),
+#         axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+#         axis.title.x = element_text(size = 20,color="black",face="bold"),
+#         axis.text.y=element_text(color="black",size=20),
+#         axis.title.y = element_text(size = 20,color="black",face="bold"),
+#         axis.title= element_text(size = 40,color="black",face="bold"))
+#   
+# png(file=paste0(path_output,"/Figure_CellPop_All.png"),res=900, units = 'in', width=14, height = 9)
+# p
+# dev.off()
 
 stat.test <- tmp %>%
   group_by(name) %>% 
@@ -1438,10 +1438,10 @@ p <- ggplot(data=tmp,
         axis.title.y = element_text(size = 20,color="black",face="bold"),
         axis.title= element_text(size = 40,color="black",face="bold")) +
   stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
-
-png(file=paste0(path_output,"/Figure_CellPop_LowvsHighCNIH4_PTB.png"),res=900, units = 'in', width=14, height = 9)
 p
-dev.off()
+# png(file=paste0(path_output,"/Figure_CellPop_LowvsHighCNIH4_PTB.png"),res=900, units = 'in', width=14, height = 9)
+# p
+# dev.off()
 ```
 
 ### 5. Box plot of CNIH4 and PDL1 expression in Neutrophils in high and low CNIH4 groups

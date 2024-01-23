@@ -186,12 +186,135 @@ tbl_regression(model3,intercept = TRUE,estimate_fun = purrr::partial(style_ratio
   bold_labels() %>%
   modify_column_unhide(columns = c(statistic, std.error))  %>% as_flex_table() %>%
   flextable::save_as_docx(path=paste0(path_output,"/glm_CavityvsCNIH4_CD274_CD58_CT_mean.docx"))
-
-
-
 ```
 
 ## 3. Main Analysis
+
+### Hurdles Model
+
+```{r}
+library(brms)
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+library(tidybayes)
+library(broom)
+library(dplyr)
+library(ggplot2)
+library(broom.mixed)
+
+options(mc.cores = 1, brms.backend = "cmdstanr")
+
+CHAINS <- 4
+ITER <- 2000
+WARMUP <- 1000
+BAYES_SEED <- 1234
+
+# Create a custom family that is logit if y = 0, normal/gaussian if not
+hurdle_gaussian <- custom_family("hurdle_gaussian", 
+                dpars = c("mu", "sigma", "hu"),
+                links = c("identity", "log", "logit"),
+                lb = c(NA, 0, NA),
+                type = "real")
+
+# Stan code
+stan_funs <- "
+  real hurdle_gaussian_lpdf(real y, real mu, real sigma, real hu) { 
+    if (y == 0) { 
+      return bernoulli_lpmf(1 | hu); 
+    } else { 
+      return bernoulli_lpmf(0 | hu) +  
+             normal_lpdf(y | mu, sigma); 
+    } 
+  }
+"
+# Prepare Stan code for use in brm()
+stanvars <- stanvar(scode = stan_funs, block = "functions")
+set_cmdstan_path('C:/Users/triettm/AppData/Local/R/win-library/4.3/.cmdstan/cmdstan-2.33.1')
+```
+
+```{r}
+Fludigm_CNIH4_PTB <- get(load(paste0(path_input,'Raw_data/Fludigm_CNIH4_PTB.Rdata')))
+dim(Fludigm_CNIH4_PTB)# 171  12
+hist(Fludigm_CNIH4_PTB$CT_Xpert_mean)
+
+Fludigm_CNIH4_PTB %<>% mutate(
+  bacterial_load_1 = log2(40/CT_Xpert_mean)
+)
+
+ggplot( Fludigm_CNIH4_PTB,aes(x = bacterial_load_1, y = CT_Xpert_mean))+
+  geom_point()
+
+hist(Fludigm_CNIH4_PTB$bacterial_load_1)
+
+Hmisc::describe(Fludigm_CNIH4_PTB)
+
+
+hist(Fludigm_CNIH4_PTB$log2_CT)
+colnames(Fludigm_CNIH4_PTB)
+
+
+model_hurdle_CNIH4 <- brm(
+  bf(bacterial_load_1 ~ CNIH4_Norm,
+     hu ~ CNIH4_Norm),
+  data = Fludigm_CNIH4_PTB,
+  family = hurdle_gaussian,  # <--- This is new
+  stanvars = stanvars,   # <--- This is new
+  chains = CHAINS, iter = ITER, warmup = WARMUP, seed = BAYES_SEED,
+  silent = 2
+)
+
+tidy(model_hurdle_CNIH4)
+# non-hurdle: 0.103 [0.0249,0.183], p = 0.0090
+# hurdle: -0.130, [-1.23, 0.955], p = 0.8085
+p_value(model_hurdle_CNIH4) # 
+
+pp_check(model_hurdle_CNIH4, ndraws = 500)
+
+c_CNIH4 <- cbind.data.frame(
+  data.frame(tidy(model_hurdle_CNIH4))[1:4,4:8],
+  p.value=p_value(model_hurdle_CNIH4)[,2])
+
+colnames(c_CNIH4)<-c("Parameter","Estimate","std.error","conf.low","conf.high","p_value")
+
+summary(Fludigm_CNIH4_PTB$CNIH4_Norm)
+
+newdata=data.frame(CNIH4_Norm=seq(2,6.5,len=50))
+
+pred_CNIH4<-fitted(model_hurdle_CNIH4, newdata = newdata)
+
+d_pred_CNIH4<-cbind(newdata,pred_CNIH4)
+
+
+d_pred_CNIH4<-d_pred_CNIH4 %>% mutate(CT_pred=40/2^(Estimate),
+              lower_pred=40/2^(Q2.5),
+              upper_pred=40/2^(Q97.5))
+dim(d_pred_CNIH4)# 50  8
+summary(d_pred_CNIH4$CNIH4_Norm)
+summary(d_pred_CNIH4$CT_pred)
+
+p_CNIH4<-ggplot(data=d_pred_CNIH4,aes(x=CNIH4_Norm,y=CT_pred))+
+  geom_line(size=2,col="#313695")+
+  geom_ribbon(aes(ymin=lower_pred,ymax=upper_pred,x=CNIH4_Norm),alpha=0.4,fill="#313695")+
+  scale_y_continuous(trans = log2_trans(),
+    breaks = (seq(10,40,by=5)),
+    labels = seq(10,40,by=5))+
+  
+  geom_jitter(data=Fludigm_CNIH4_PTB,aes(x = CNIH4_Norm, y = CT_Xpert_mean  ), size=2.5,alpha=0.5)+
+  theme_bw()+
+  #labs(x = paste("CNIH4 Norm"," expression level [log2 counts] "), y = "Ct value")+
+  labs(x = paste("CNIH4 Norm"), y = "Ct value")+
+  theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15))+coord_cartesian(ylim=c(10,40))
+p_CNIH4
+```
 
 ### Regression Analysis
 
