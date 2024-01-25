@@ -112,6 +112,146 @@ get_genelist_pathway_kegg <- function(hsa_ID){
 ## \*Draft analysis - Playground (just for the experimental stuffs)
 
 ```{r}
+library(ggdendro)
+# Load network data saved in the second part.
+lnames = load(file = paste0(path_input,"Data/PTB-01-dataInput.RData"));
+lnames = load(file = paste0(path_input,"Data/PTB-02-networkConstruction-auto.RData"));
+nSets = checkSets(multiExpr)$nSets
+net$MEsOK; MEs_discovery; moduleColors; moduleLabels
+ 
+### Recalculate module eigene (ME - PC1)
+# Set up variables to contain the ME 
+MEs = list();
+varExplained_firstPC <- list()
+# Calculate the ME for discovery and validation
+
+for (set in 1:nSets){
+  temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
+  temp_ME_order <- orderMEs(temp_ME)
+  MEs[[set]] = list(data = temp_ME_order)
+  temp_PC <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$varExplained)
+  names(temp_PC)<-colnames(temp_ME)
+  varExplained_firstPC[[set]] = list(data = temp_PC)
+}
+ 
+# re-order the names of module colors discovery cohort as the same in the validation cohorts
+MEs[[2]]$data = MEs[[2]]$data[,names(MEs[[1]]$data)]
+# Remove all "ME" from the names of MEs
+colnames(MEs[[1]]$data)<-gsub("ME","",colnames(MEs[[1]]$data))
+colnames(MEs[[2]]$data)<-gsub("ME","",colnames(MEs[[2]]$data))
+ 
+# varExplained_firstPC[[1]]$data
+ 
+ME_dat<-MEs[[1]]$data
+# 1-Pearson correlation distance
+ 
+cor_mat <- cor(ME_dat,
+               use='pairwise.complete.obs',
+               method = "spearman")
+dist_matrix <- as.dist(1-cor_mat)
+# dist_matrix <- dist(ME_dat, method="euclidean")
+ 
+hc <- hclust(dist_matrix, method="ward.D2")
+hcd <- as.dendrogram(hc)
+## plot module hierarchical clustering
+# png(file = paste0(path_output_2,"/PTB-Module_hierarchical_clustering_3.png"),
+#     wi = 15, he = 10,units = 'in', res = 480)
+p1<-ggdendrogram(hc, rotate =T, theme_dendro = TRUE,size = 3)+
+  ylab("")+xlab("") +
+  theme_void()+ 
+  theme(legend.position="bottom")+
+  theme(panel.grid.minor = element_blank(),axis.title.x = element_blank(),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text(face="bold",colour="black", size=13),
+        axis.text.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12)) + 
+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))
+# pval matrix
+col=c("#001164", 'white', "#FF681E") #"#A50026"
+#col=c("#001164", 'white', "#A50026") #
+cor.pval.test <- function(x1, x2, ...) {
+  r <- ncol(x1)
+  n <- ncol(x2)
+  p.mat<- matrix(NA, r, n)
+  for (i in 1:r) {
+    for (j in 1:n) {
+      tmp <- cor.test(x1[, i], x2[, j], ...)
+      p.mat[i, j] <- tmp$p.value
+    }
+  }
+  rownames(p.mat) <-  colnames(x1)
+  colnames(p.mat) <- colnames(x2)
+  return(p.mat)
+}
+ 
+ 
+# Reorder the module base on hierarchical_clustering
+module_order<-rev(hc$labels[hc$order])
+ME_dat<-ME_dat[,module_order]
+## Plot the correlation between top-hit metabolites based on the cluster
+  # Plot2 : metabolites pairwise
+  # Mets vs each-other
+cor_method="spearman"
+mat2 <- cor(ME_dat,
+            use='pairwise.complete.obs', method = cor_method)
+# matrix of the p-value of the correlation
+p.mat2 <- cor.pval.test(ME_dat, ME_dat,
+                        method=cor_method, use='pairwise.complete.obs')
+p2 <-ggcorrplot(mat2,
+               p.mat = p.mat2, 
+               colors = col,hc.order = FALSE,
+               type = 'full',
+               outline.color = 'black',lab = T, lab_size = 3,insig="blank",
+               show.diag = T) +
+    scale_fill_gradient2(low=col[1], mid= col[2], high=col[3], na.value = 'gray50', limits=c(-1,1))+
+    labs(fill="Corr")+
+    theme(axis.text.x = element_blank(),axis.text.y = element_text(face="bold", colour="black", size=12),legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12))+theme(legend.position="right")
+cowplot::plot_grid(p1,p2, nrow = 1,rel_widths = c(1, 2))
+#dev.off()
+
+
+library(igraph)
+library(qgraph)
+# Keep only high correlations
+mat <- mat2
+mat[p.mat2>=0.05] <- 0
+ 
+# Make an Igraph object from this matrix:
+network <- graph_from_adjacency_matrix(mat, weighted=T, mode="undirected", diag=F)
+#E(network)$weight <- 2**((E(network)$weight - min(E(network)$weight)) / diff(range(E(network)$weight)))
+V(network)$color <- rownames(mat)
+
+tab <- table(moduleColors) %>% as.data.frame
+node.size <- tab[match(rownames(mat), tab$moduleColors),]$Freq
+e <- get.edgelist(network,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,
+                                       vcount=vcount(network),
+                                       area=100,
+                                       repulse.rad=(vcount(network)^4)
+                                       )
+
+
+library(comprehenr)
+to_vec(for(i in 1:18) if(rownames(mat2)[i]%in%c('blue','brown','turquoise')) -85 )
+
+
+
+plot(network,
+     layout= l,
+     vertex.size=node.size*0.02,
+     vertex.label.color = ifelse(rownames(mat2)%in%c('blue','brown'),  'white','black'),
+     vertex.label.dist=ifelse(rownames(mat2)%in%c('blue','brown','turquoise'), 0, 1),
+     vertex.label.degree = ifelse(rownames(mat2)%in%c('blue','brown','turquoise'), 0, 92),
+       )
+
+```
+
+```{r}
 library(ggplot2)
 library(ggpmisc)
 df <- filter(vst_ptb_tbm,Type=='PTB') %>% select(c('CNIH4','CD274','CD58','CT_mean')) %>% mutate(CD274_CD58=CD274/CD58)
