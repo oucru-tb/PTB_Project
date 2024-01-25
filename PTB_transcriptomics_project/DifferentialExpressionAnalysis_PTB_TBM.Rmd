@@ -58,6 +58,10 @@ load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
 load(paste0(path_input, "Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
 All_sample_RNAseq <- readxl::read_excel(paste0(path_input,"Raw_data/All_sample_RNAseq.xlsx"),sheet = "Run1and2") %>% as.data.frame()
 rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
+
+
+load(file=paste0(path_input,"Raw_data/Data_26_27_CT_CNIH4.Rdata.RData"))
+Fludigm_CNIH4_PTB <- get(load(paste0(path_input,'Raw_data/Fludigm_CNIH4_PTB.Rdata')))
 ```
 
 ```{r}
@@ -79,6 +83,20 @@ rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
 ## 2. Helper functions
 
 ```{r}
+
+posterior_predict_hurdle_gaussian <- function(i, prep, ...) {
+  mu <- brms::get_dpar(prep, "mu", i = i)
+  sigma <- brms::get_dpar(prep, "sigma", i = i)
+  theta <- brms::get_dpar(prep, "hu", i = i)
+     
+  hu <- runif(prep$ndraws, 0, 1)
+  ifelse(hu < theta, 0, rnorm(prep$ndraws, mu,sigma))
+}
+   
+posterior_epred_hurdle_gaussian <- function(prep) {
+  with(prep$dpars, mu * (1 - hu))
+}
+
 cor.pval.test <- function(x1, x2, ...) {
   r <- ncol(x1)
   n <- ncol(x2)
@@ -215,39 +233,167 @@ cowplot::plot_grid(p1,p2, nrow = 1,rel_widths = c(1, 2))
 #dev.off()
 
 
-library(igraph)
-library(qgraph)
+
+## Module-trait association analysis
+sizeGrWindow(10,6)
+textMatrix<-list()
+xLabels = c("Gene-Xpert \n Ct value", "Cavity","Lung proportion\n damage")
+ 
+# png(file=paste0(path_output_2,"/Figure 1A-ModuleTraitRelationships-PTB.png"),
+#     wi = 8, he = 8,units = 'in', res = 550)
+par(mfrow = c(1,2),mar = c(5,6,2.5,1))
+
+
+
+
+
+for(set in 1:nSets){
+# datTraits<-traitData[[set]]$data %>% dplyr::select(c("log2_CT", "Cavity", "Lung_proportion"))
+# Will display correlations and their p-values
+textMatrix[[set]] =  paste(signif(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 2), "\n(",
+                    signif(moduleTraitPvalue[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 1), ")", sep = "");
+dim(textMatrix[[set]]) = dim(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")])
+# png(file=paste0(path_output_2,"/Figure 1A-ModuleTraitRelationships-PTB_",shortLabels[set],".png"),
+#     units="px", width=1800, height=1800, res=300)
+# par(mar = c(6, 8.5, 3, 3));
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor.scaled[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")],
+               xLabels = xLabels,
+               yLabels = module_order,
+               ySymbols = module_order,
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix[[set]],
+               setStdMargins = FALSE,
+               cex.text = 0.7,
+               zlim = c(-3,3),
+               main = paste0(shortLabels[set]," cohort"))
+ 
+}
+#dev.off()
+set=1
+textMatrix[[set]] =  paste(signif(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 2), "\n(",
+                    signif(moduleTraitPvalue[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 1), ")", sep = "");
+dim(textMatrix[[set]]) = dim(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")])
+labeledHeatmap(Matrix = moduleTraitCor.scaled[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")],
+               xLabels = xLabels,
+               yLabels = module_order,
+               ySymbols = module_order,
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix[[set]],
+               setStdMargins = FALSE,
+               cex.text = 0.7,
+               zlim = c(-3,3),
+               main = paste0(shortLabels[set]," cohort"))
+
+
+moduleTraitCor.scaled[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")]
+
+signif(moduleTraitCor[[set]][module_order,c("log2_CT")], 2)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+lnames = load(file = paste0(path_input,"Data/PTB-01-dataInput.RData"))
+lnames = load(file = paste0(path_input,"Data/PTB-02-networkConstruction-auto.RData"))
+load(file=paste0(path_input,"Data/Module_discovery.Rdata"))
+MEs = list();
+varExplained_firstPC <- list()
+set = 1
+temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
+temp_ME_order <- orderMEs(temp_ME)
+MEs[[set]] = list(data = temp_ME_order)
+temp_PC <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$varExplained)
+names(temp_PC)<-colnames(temp_ME)
+varExplained_firstPC[[set]] = list(data = temp_PC)
+  
+colnames(MEs[[1]]$data)<-gsub("ME","",colnames(MEs[[1]]$data))
+ME_dat<-MEs[[1]]$data
+cor_mat <- cor(ME_dat,use='pairwise.complete.obs',method = "spearman")
+dist_matrix <- as.dist(1-cor_mat)
+hc <- hclust(dist_matrix, method="ward.D2")
+module_order<-rev(hc$labels[hc$order])
+ME_dat<-ME_dat[,module_order]
+cor_method="spearman"
+mat2 <- cor(ME_dat,use='pairwise.complete.obs', method = cor_method)
+p.mat2 <- cor.pval.test(ME_dat, ME_dat,method=cor_method, use='pairwise.complete.obs')
+
+tmp <- signif(moduleTraitCor[[set]][module_order,c("log2_CT")], 2) %>% as.data.frame()
+tmp<-tmp[match(rownames(mat), rownames(tmp)),]
+tmp
+
+colorRampPalette(c("blue", "red"))(length(tmp))
+
+
 # Keep only high correlations
 mat <- mat2
 mat[p.mat2>=0.05] <- 0
- 
+mat
+# th <- 0.3
+# mat[mat<th&mat>-th] <- mat[mat<th&mat>-th]/5
+
 # Make an Igraph object from this matrix:
 network <- graph_from_adjacency_matrix(mat, weighted=T, mode="undirected", diag=F)
-#E(network)$weight <- 2**((E(network)$weight - min(E(network)$weight)) / diff(range(E(network)$weight)))
-V(network)$color <- rownames(mat)
-
 tab <- table(moduleColors) %>% as.data.frame
 node.size <- tab[match(rownames(mat), tab$moduleColors),]$Freq
 e <- get.edgelist(network,names=FALSE)
 l <- qgraph.layout.fruchtermanreingold(e,
                                        vcount=vcount(network),
                                        area=100,
-                                       repulse.rad=(vcount(network)^4)
+                                       repulse.rad=(vcount(network)^2.2)
                                        )
 
+png(file=paste0(path_output,"/Figure_correlation_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
 
-library(comprehenr)
-to_vec(for(i in 1:18) if(rownames(mat2)[i]%in%c('blue','brown','turquoise')) -85 )
 
+V(matrixnetwork)$color <- colorRampPalette(c("#4477AA","#BB4444"))(100)[tmp]
+
+V(network)$degree <- degree(network)
+uni_all <- seq( min(V(network)$degree), max(V(network)$degree))
+colors <- data.frame(color = heat.colors(length(uni_all), rev = T),
+                      levels = uni_all)
+plot(network,
+     layout= l,
+     vertex.label='',
+     vertex.size=log2(node.size)*2,
+     vertex.color=rownames(mat),
+     vertex.label.color = ifelse(rownames(mat)%in%c('blue','brown'),  'white','black'),
+     vertex.label.dist=ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 1),
+     vertex.label.degree = ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 92),
+     edge.color = adjustcolor(c("#FF681E", "#001164")[(E(network)$weight<0)+1], 0.7),
+     edge.width=(E(network)$weight)*5,
+     edge.curved=0.08,
+     vertex.frame.color= adjustcolor(colors$color[match(V(network)$degree, colors$levels)],0.9),
+     vertex.frame.width=10,
+     )
+
+dev.off()
+tmp
+
+E(network)
 
 
 plot(network,
      layout= l,
-     vertex.size=node.size*0.02,
-     vertex.label.color = ifelse(rownames(mat2)%in%c('blue','brown'),  'white','black'),
-     vertex.label.dist=ifelse(rownames(mat2)%in%c('blue','brown','turquoise'), 0, 1),
-     vertex.label.degree = ifelse(rownames(mat2)%in%c('blue','brown','turquoise'), 0, 92),
-       )
+     vertex.label='',
+     vertex.size=log2(node.size)*2,
+     vertex.color=rownames(mat),
+     vertex.label.color = ifelse(rownames(mat)%in%c('blue','brown'),  'white','black'),
+     vertex.label.dist=ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 1),
+     vertex.label.degree = ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 92),
+     edge.color = adjustcolor(c("#FF681E", "#001164")[(E(network)$weight<0)+1], 0.7),
+     )
 
 ```
 
@@ -370,11 +516,16 @@ stan_funs <- "
 "
 # Prepare Stan code for use in brm()
 stanvars <- stanvar(scode = stan_funs, block = "functions")
-set_cmdstan_path('C:/Users/triettm/AppData/Local/R/win-library/4.3/.cmdstan/cmdstan-2.33.1')
+#set_cmdstan_path('C:/Users/triettm/AppData/Local/R/win-library/4.3/.cmdstan/cmdstan-2.33.1')
+set_cmdstan_path('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/Documents/.cmdstan/cmdstan-2.34.0')
+
 ```
 
 ```{r}
+library(parameters)
+
 Fludigm_CNIH4_PTB <- get(load(paste0(path_input,'Raw_data/Fludigm_CNIH4_PTB.Rdata')))
+
 dim(Fludigm_CNIH4_PTB)# 171  12
 hist(Fludigm_CNIH4_PTB$CT_Xpert_mean)
 
@@ -419,7 +570,7 @@ colnames(c_CNIH4)<-c("Parameter","Estimate","std.error","conf.low","conf.high","
 
 summary(Fludigm_CNIH4_PTB$CNIH4_Norm)
 
-newdata=data.frame(CNIH4_Norm=seq(2,6.5,len=50))
+newdata=data.frame(CNIH4_Norm=seq(min(Fludigm_CNIH4_PTB$CNIH4_Norm),max(Fludigm_CNIH4_PTB$CNIH4_Norm),len=50))
 
 pred_CNIH4<-fitted(model_hurdle_CNIH4, newdata = newdata)
 
@@ -433,7 +584,7 @@ dim(d_pred_CNIH4)# 50  8
 summary(d_pred_CNIH4$CNIH4_Norm)
 summary(d_pred_CNIH4$CT_pred)
 
-p_CNIH4<-ggplot(data=d_pred_CNIH4,aes(x=CNIH4_Norm,y=CT_pred))+
+p_CNIH4<-ggplot(data=,aes(x=CNIH4_Norm,y=CT_pred))+
   geom_line(size=2,col="#313695")+
   geom_ribbon(aes(ymin=lower_pred,ymax=upper_pred,x=CNIH4_Norm),alpha=0.4,fill="#313695")+
   scale_y_continuous(trans = log2_trans(),
@@ -454,6 +605,82 @@ p_CNIH4<-ggplot(data=d_pred_CNIH4,aes(x=CNIH4_Norm,y=CT_pred))+
         legend.key = element_rect(colour = NA),
         strip.text=element_text(face = "bold",size=15))+coord_cartesian(ylim=c(10,40))
 p_CNIH4
+```
+
+```{r}
+
+
+df1 <- vst_data %>%select(c('CNIH4','CT_mean')) %>% mutate(CT_Xpert_mean = CT_mean, CNIH4_Norm = CNIH4)
+df2 <- Data_26_27_CT %>%select(c('CNIH4','NAT')) %>% mutate(CT_Xpert_mean = NAT, CNIH4_Norm = CNIH4)
+df3 <- Fludigm_CNIH4_PTB %>%select(c('CNIH4_Norm','GAPDH','CT_Xpert_mean')) %>% filter(GAPDH<11)
+dfList <- list(df1,df2,df3)
+#pval <- c('p < 2e-16','p < 2e-16', 'p = 0.007')
+xpos <- c(11,11.2,2.8)
+
+i=1
+
+df <- dfList[[i]]
+df <- df %>% mutate(bacterial_load_1 = log2(40/CT_Xpert_mean))
+model_hurdle_CNIH4 <- brm(bf(bacterial_load_1 ~ CNIH4_Norm,
+                             hu ~ CNIH4_Norm),
+                          data = df,
+                          family = hurdle_gaussian,  # <--- This is new
+                          stanvars = stanvars,   # <--- This is new
+                          chains = CHAINS, iter = ITER, warmup = WARMUP, seed = BAYES_SEED,
+                          silent = 2
+                          )
+tidy(model_hurdle_CNIH4)
+p_value(model_hurdle_CNIH4)
+pp_check(model_hurdle_CNIH4, ndraws = 500)
+
+c_CNIH4 <- cbind.data.frame(data.frame(tidy(model_hurdle_CNIH4))[1:4,4:8],
+                            p.value=p_value(model_hurdle_CNIH4)[,2])
+colnames(c_CNIH4)<-c("Parameter","Estimate","std.error","conf.low","conf.high","p_value")
+
+summary(df$CNIH4_Norm)
+
+newdata=data.frame(CNIH4_Norm=seq(min(df$CNIH4_Norm),max(df$CNIH4_Norm),len=50))
+
+pred_CNIH4<-fitted(model_hurdle_CNIH4, newdata = newdata)
+
+d_pred_CNIH4<-cbind(newdata,pred_CNIH4)
+
+
+d_pred_CNIH4<-d_pred_CNIH4 %>% mutate(CT_pred=40/2^(Estimate),
+          lower_pred=40/2^(Q2.5),
+          upper_pred=40/2^(Q97.5))
+dim(d_pred_CNIH4)# 50  8
+summary(d_pred_CNIH4$CNIH4_Norm)
+summary(d_pred_CNIH4$CT_pred)
+
+p <- ggplot(data=d_pred_CNIH4,aes(x=CNIH4_Norm,y=CT_pred))+
+  geom_line(size=2,col="#5E81AC")+
+  geom_ribbon(aes(ymin=lower_pred,ymax=upper_pred,x=CNIH4_Norm),alpha=0.4,fill="#5E81AC")+
+  scale_y_continuous(trans = log2_trans(),
+                     breaks = (seq(10,40,by=5)),
+                     labels = seq(10,40,by=5))+
+  geom_point(data=df,aes(x = CNIH4_Norm, y = CT_Xpert_mean), size=4,alpha=0.2,col = "#313695")+
+  # xlab("CNIH4 relative to GAPDH")+
+  xlab('CHIH4 expression level [log2 counts]')+
+  ylab("Mtb Xpert CT value")+
+  theme_bw()+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12)) +
+  annotate(geom="text",label='atop(bold("p < 2e-16"))',x=xpos[i],y=37,size=7,
+              col="black", parse = TRUE)
+
+png(file=paste0(path_output,"/PTB_CNIH4.png"),res=400, units = 'in', width=5, height = 5)
+p
+dev.off()
 ```
 
 ### Regression Analysis
