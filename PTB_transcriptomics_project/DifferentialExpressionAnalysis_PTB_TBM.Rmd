@@ -56,7 +56,8 @@ load(paste0(path_input,"/Data/Fluidigm_PTB_data.Rdata"))
 load(paste0(path_input,"/Data/Most_variance_RNA_genes.Rdata"))
 load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
 load(paste0(path_input, "Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
-All_sample_RNAseq <- readxl::read_excel(paste0(path_input,"Raw_data/All_sample_RNAseq.xlsx"),sheet = "Run1and2") %>% as.data.frame()
+All_sample_RNAseq <- readxl::read_excel(paste0(path_input,"Raw_data/All_sample_RNAseq.xlsx"),
+                                        sheet = "Run1and2") %>% as.data.frame()
 rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
 
 
@@ -295,14 +296,10 @@ signif(moduleTraitCor[[set]][module_order,c("log2_CT")], 2)
 
 
 
+signif(moduleTraitCor[[2]][module_order,c("log2_CT")], 2)
 
 
-
-
-
-
-
-
+ME_dat
 
 
 lnames = load(file = paste0(path_input,"Data/PTB-01-dataInput.RData"))
@@ -310,7 +307,16 @@ lnames = load(file = paste0(path_input,"Data/PTB-02-networkConstruction-auto.RDa
 load(file=paste0(path_input,"Data/Module_discovery.Rdata"))
 MEs = list();
 varExplained_firstPC <- list()
-set = 1
+
+for (set in 1:nSets){
+  temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
+  temp_ME_order <- orderMEs(temp_ME)
+  MEs[[set]] = list(data = temp_ME_order)
+  temp_PC <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$varExplained)
+  names(temp_PC)<-colnames(temp_ME)
+  varExplained_firstPC[[set]] = list(data = temp_PC)
+}
+
 temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
 temp_ME_order <- orderMEs(temp_ME)
 MEs[[set]] = list(data = temp_ME_order)
@@ -329,13 +335,12 @@ cor_method="spearman"
 mat2 <- cor(ME_dat,use='pairwise.complete.obs', method = cor_method)
 p.mat2 <- cor.pval.test(ME_dat, ME_dat,method=cor_method, use='pairwise.complete.obs')
 
-tmp <- signif(moduleTraitCor[[set]][module_order,c("log2_CT")], 2) %>% as.data.frame()
-tmp<-tmp[match(rownames(mat), rownames(tmp)),]
-tmp
+tmp1 <- signif(moduleTraitCor[[set]][module_order,c("log2_CT")], 2) %>% as.data.frame()
+tmp1<-tmp[match(rownames(mat), rownames(tmp1)),]
+tmp1
 
-colorRampPalette(c("blue", "red"))(length(tmp))
-
-
+library(igraph)
+library(qgraph)
 # Keep only high correlations
 mat <- mat2
 mat[p.mat2>=0.05] <- 0
@@ -361,12 +366,44 @@ V(matrixnetwork)$color <- colorRampPalette(c("#4477AA","#BB4444"))(100)[tmp]
 
 V(network)$degree <- degree(network)
 uni_all <- seq( min(V(network)$degree), max(V(network)$degree))
-colors <- data.frame(color = heat.colors(length(uni_all), rev = T),
-                      levels = uni_all)
+uni_all <- seq(min(tmp),max(tmp),((max(tmp) - min(tmp))/(18 - 1)))
+#uni_all <- seq( min(tmp), max(tmp))
+#uni_all
+tmp
+
+colors <- data.frame(color = cm.colors(length(tmp), rev = T),
+                      levels = tmp)
+
+colors <- data.frame(color = colorRampPalette(c("#4477AA","#BB4444"))(18),#natparks.pals("Arches",n=18),
+                      levels = sort(tmp))
+
+
+colors
+
+
+
+
+colorRampPalette(c("#4477AA","#BB4444"))(100)[tmp]
+
+scale_color_gradientn(colors=natparks.pals("Arches",n=100))
+
+colors
+
+V(network)$degree
+library("RColorBrewer")
+library(wesanderson)
+library(NatParksPalettes)
+natparks.pals("Acadia")
+wes_palette("Zissou1", 18, type = "continuous")
+  
+brewer.pal(n = 18, name = 'RdBu')
+
 plot(network,
      layout= l,
      vertex.label='',
      vertex.size=log2(node.size)*2,
+     #vertex.size=node.size*0.02,
+     vertex.shape="pie",
      vertex.color=rownames(mat),
      vertex.label.color = ifelse(rownames(mat)%in%c('blue','brown'),  'white','black'),
      vertex.label.dist=ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 1),
@@ -374,9 +411,19 @@ plot(network,
      edge.color = adjustcolor(c("#FF681E", "#001164")[(E(network)$weight<0)+1], 0.7),
      edge.width=(E(network)$weight)*5,
      edge.curved=0.08,
-     vertex.frame.color= adjustcolor(colors$color[match(V(network)$degree, colors$levels)],0.9),
-     vertex.frame.width=10,
+     vertex.frame.color= adjustcolor(colors$color[match(tmp, colors$levels)],1),
+     vertex.frame.width=5,
      )
+
+colors$color
+V(network)$degree
+colors$levels
+
+
+colors$color[match(V(network)$degree, colors$levels)]
+
+colors$color[match(tmp, colors$levels)]
+
 
 dev.off()
 tmp
