@@ -42,6 +42,7 @@ library("stabs")
 library("mboost")
 library(DESeq2)
 library(CEMiTool)
+library(igraph)
 ```
 
 ```{r}
@@ -131,191 +132,268 @@ get_genelist_pathway_kegg <- function(hsa_ID){
 ## \*Draft analysis - Playground (just for the experimental stuffs)
 
 ```{r}
-library(ggdendro)
-# Load network data saved in the second part.
-lnames = load(file = paste0(path_input,"Data/PTB-01-dataInput.RData"));
-lnames = load(file = paste0(path_input,"Data/PTB-02-networkConstruction-auto.RData"));
-nSets = checkSets(multiExpr)$nSets
-net$MEsOK; MEs_discovery; moduleColors; moduleLabels
- 
-### Recalculate module eigene (ME - PC1)
-# Set up variables to contain the ME 
-MEs = list();
-varExplained_firstPC <- list()
-# Calculate the ME for discovery and validation
-
-for (set in 1:nSets){
-  temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
-  temp_ME_order <- orderMEs(temp_ME)
-  MEs[[set]] = list(data = temp_ME_order)
-  temp_PC <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$varExplained)
-  names(temp_PC)<-colnames(temp_ME)
-  varExplained_firstPC[[set]] = list(data = temp_PC)
+mypie <- function(x, y, values, radius, edges=200, col=NULL, angle=45,
+                  density=NULL, border=NULL, lty=NULL, init.angle=90, ...) {
+  values <- c(0, cumsum(values)/sum(values))
+  dx <- diff(values)
+  nx <- length(dx)
+  twopi <- 2 * pi
+  if (is.null(col)) 
+    col <- if (is.null(density)) 
+      c("white", "lightblue", "mistyrose", "lightcyan", 
+        "lavender", "cornsilk")
+    else par("fg")
+  col <- rep(col, length.out = nx)
+  border <- rep(border, length.out = nx)
+  lty <- rep(lty, length.out = nx)
+  angle <- rep(angle, length.out = nx)
+  density <- rep(density, length.out = nx)
+  t2xy <- function(t) {
+    t2p <- twopi * t + init.angle * pi/180
+    list(x = radius * cos(t2p), y = radius * sin(t2p))
+  }
+  for (i in 1:nx) {
+    n <- max(2, floor(edges * dx[i]))
+    P <- t2xy(seq.int(values[i], values[i + 1], length.out = n))
+    polygon(x+c(P$x, 0), y+c(P$y, 0), density = density[i], angle = angle[i], 
+            border = border[i], col = col[i], lty = lty[i], ...)
+  }
 }
- 
-# re-order the names of module colors discovery cohort as the same in the validation cohorts
-MEs[[2]]$data = MEs[[2]]$data[,names(MEs[[1]]$data)]
-# Remove all "ME" from the names of MEs
-colnames(MEs[[1]]$data)<-gsub("ME","",colnames(MEs[[1]]$data))
-colnames(MEs[[2]]$data)<-gsub("ME","",colnames(MEs[[2]]$data))
- 
-# varExplained_firstPC[[1]]$data
- 
-ME_dat<-MEs[[1]]$data
-# 1-Pearson correlation distance
- 
-cor_mat <- cor(ME_dat,
-               use='pairwise.complete.obs',
-               method = "spearman")
-dist_matrix <- as.dist(1-cor_mat)
-# dist_matrix <- dist(ME_dat, method="euclidean")
- 
-hc <- hclust(dist_matrix, method="ward.D2")
-hcd <- as.dendrogram(hc)
-## plot module hierarchical clustering
-# png(file = paste0(path_output_2,"/PTB-Module_hierarchical_clustering_3.png"),
-#     wi = 15, he = 10,units = 'in', res = 480)
-p1<-ggdendrogram(hc, rotate =T, theme_dendro = TRUE,size = 3)+
-  ylab("")+xlab("") +
-  theme_void()+ 
-  theme(legend.position="bottom")+
-  theme(panel.grid.minor = element_blank(),axis.title.x = element_blank(),
-        axis.title.y = element_text(face="bold", colour="black", size=12),
-        axis.text.y = element_text(face="bold",colour="black", size=13),
-        axis.text.x = element_blank(),
-        axis.ticks.x=element_blank(),
-        legend.text = element_text(size = 15),
-        legend.title = element_text( colour="black", size=12),
-        legend.key = element_rect(colour = NA),
-        strip.text=element_text(face = "bold",size=12)) + 
-  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))
-# pval matrix
-col=c("#001164", 'white', "#FF681E") #"#A50026"
-#col=c("#001164", 'white', "#A50026") #
-cor.pval.test <- function(x1, x2, ...) {
-  r <- ncol(x1)
-  n <- ncol(x2)
-  p.mat<- matrix(NA, r, n)
-  for (i in 1:r) {
-    for (j in 1:n) {
-      tmp <- cor.test(x1[, i], x2[, j], ...)
-      p.mat[i, j] <- tmp$p.value
+
+.igraph.shape.pie <- function(coords, el=NULL, v=NULL, mode=c("clip", "plot"),
+                                 params, end=c("both", "from", "to")) {
+
+  mode=match.arg(mode)
+  end =match.arg(end)
+
+  #####################################################################
+  ## clipping mode, this is the same as for circle
+
+  if (mode=="clip") {
+    if (length(coords)==0) { return (coords) }     
+
+    vertex.size <- 1/200 * params("vertex", "size")
+
+    if (end=="from") {
+      phi <- atan2(coords[,4] - coords[,2], coords[,3] - coords[,1])
+      vsize.from <- if (length(vertex.size)==1) {
+        vertex.size
+      } else {
+        vertex.size[ el[,1] ]
+      }
+      res <- cbind(coords[,1] + vsize.from*cos(phi),
+                   coords[,2] + vsize.from*sin(phi) )
+    } else if (end=="to") {
+      phi <- atan2(coords[,4] - coords[,2], coords[,3] - coords[,1])
+      r <- sqrt( (coords[,3] - coords[,1])^2 + (coords[,4] - coords[,2])^2 )
+      vsize.to <- if (length(vertex.size)==1) {
+        vertex.size
+      } else {
+        vertex.size[ el[,2] ]
+      }
+      res <- cbind(coords[,1] + (r-vsize.to)*cos(phi),
+                   coords[,2] + (r-vsize.to)*sin(phi) )
+    } else if (end=="both") {
+      phi <- atan2(coords[,4] - coords[,2], coords[,3] - coords[,1])
+      r <- sqrt( (coords[,3] - coords[,1])^2 + (coords[,4] - coords[,2])^2 )
+      vsize.from <- if (length(vertex.size)==1) {
+        vertex.size
+      } else {
+        vertex.size[ el[,1] ]
+      }
+      vsize.to <- if (length(vertex.size)==1) {
+        vertex.size
+      } else {
+        vertex.size[ el[,2] ]
+      }
+      res <- cbind(coords[,1] + vsize.from*cos(phi),
+                   coords[,2] + vsize.from*sin(phi),
+                   coords[,1] + (r-vsize.to)*cos(phi),
+                   coords[,2] + (r-vsize.to)*sin(phi) )
+    }
+
+    res
+
+  #####################################################################
+  ## plotting mode
+
+  } else if (mode=="plot") {
+    getparam <- function(pname) {
+      p <- params("vertex", pname)
+      if (length(p) != 1 && !is.null(v)) {
+        p <- p[v]
+      }
+      p
+    }
+    vertex.color       <- getparam("color")
+    vertex.frame.color <- getparam("frame.color")
+    vertex.size        <- rep(1/200 * getparam("size"), length=nrow(coords))
+    vertex.pie         <- getparam("pie")
+    vertex.pie.color   <- getparam("pie.color")
+    vertex.pie.angle   <- getparam("pie.angle")
+    vertex.pie.density <- getparam("pie.density")
+    vertex.pie.lty     <- getparam("pie.lty")
+
+    for (i in seq_len(nrow(coords))) {
+      pie <- if(length(vertex.pie)==1) {
+        vertex.pie
+      } else {
+        vertex.pie[[i]]
+      }
+      col <- if (length(vertex.pie.color)==1) {
+        vertex.pie.color[[1]]
+      } else {
+        vertex.pie.color[[i]]
+      }
+      mypie(x=coords[i,1], y=coords[i,2], pie,
+            radius=vertex.size[i], edges=200, col=col,
+            angle=na.omit(vertex.pie.angle[c(i,1)])[1],
+            density=na.omit(vertex.pie.density[c(i,1)])[1],
+            border=na.omit(vertex.frame.color[c(i,1)])[1],
+            lty=na.omit(vertex.pie.lty[c(i,1)])[1])
     }
   }
-  rownames(p.mat) <-  colnames(x1)
-  colnames(p.mat) <- colnames(x2)
-  return(p.mat)
 }
- 
- 
-# Reorder the module base on hierarchical_clustering
-module_order<-rev(hc$labels[hc$order])
-ME_dat<-ME_dat[,module_order]
-## Plot the correlation between top-hit metabolites based on the cluster
-  # Plot2 : metabolites pairwise
-  # Mets vs each-other
-cor_method="spearman"
-mat2 <- cor(ME_dat,
-            use='pairwise.complete.obs', method = cor_method)
-# matrix of the p-value of the correlation
-p.mat2 <- cor.pval.test(ME_dat, ME_dat,
-                        method=cor_method, use='pairwise.complete.obs')
-p2 <-ggcorrplot(mat2,
-               p.mat = p.mat2, 
-               colors = col,hc.order = FALSE,
-               type = 'full',
-               outline.color = 'black',lab = T, lab_size = 3,insig="blank",
-               show.diag = T) +
-    scale_fill_gradient2(low=col[1], mid= col[2], high=col[3], na.value = 'gray50', limits=c(-1,1))+
-    labs(fill="Corr")+
-    theme(axis.text.x = element_blank(),axis.text.y = element_text(face="bold", colour="black", size=12),legend.text = element_text(size = 15),
-        legend.title = element_text( colour="black", size=12))+theme(legend.position="right")
-cowplot::plot_grid(p1,p2, nrow = 1,rel_widths = c(1, 2))
-#dev.off()
 
+add.vertex.shape("pie2", 
+                 clip=igraph.shape.noclip,
+                 plot=mypie)
 
+```
 
-## Module-trait association analysis
-sizeGrWindow(10,6)
-textMatrix<-list()
-xLabels = c("Gene-Xpert \n Ct value", "Cavity","Lung proportion\n damage")
- 
-# png(file=paste0(path_output_2,"/Figure 1A-ModuleTraitRelationships-PTB.png"),
-#     wi = 8, he = 8,units = 'in', res = 550)
-par(mfrow = c(1,2),mar = c(5,6,2.5,1))
+```{r}
 
+library(igraph)
+unlockBinding(".igraph.shapes", asNamespace("igraph"))
+unlockBinding("i.default.values", asNamespace("igraph"))
 
+shapes <- igraph:::.igraph.shapes
+defaults <- igraph:::i.default.values
 
-
-
-for(set in 1:nSets){
-# datTraits<-traitData[[set]]$data %>% dplyr::select(c("log2_CT", "Cavity", "Lung_proportion"))
-# Will display correlations and their p-values
-textMatrix[[set]] =  paste(signif(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 2), "\n(",
-                    signif(moduleTraitPvalue[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 1), ")", sep = "");
-dim(textMatrix[[set]]) = dim(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")])
-# png(file=paste0(path_output_2,"/Figure 1A-ModuleTraitRelationships-PTB_",shortLabels[set],".png"),
-#     units="px", width=1800, height=1800, res=300)
-# par(mar = c(6, 8.5, 3, 3));
-# Display the correlation values within a heatmap plot
-labeledHeatmap(Matrix = moduleTraitCor.scaled[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")],
-               xLabels = xLabels,
-               yLabels = module_order,
-               ySymbols = module_order,
-               colorLabels = FALSE,
-               colors = blueWhiteRed(50),
-               textMatrix = textMatrix[[set]],
-               setStdMargins = FALSE,
-               cex.text = 0.7,
-               zlim = c(-3,3),
-               main = paste0(shortLabels[set]," cohort"))
- 
+mypie <- function(x, y, values, radius, edges=200, col=NULL, angle=45,width=NULL,
+                  density=NULL, border=NULL, lty=NULL, init.angle=90, ...) {
+  values <- c(0, cumsum(values)/sum(values))
+  dx <- diff(values)
+  nx <- length(dx)
+  twopi <- 2 * pi
+  if (is.null(col))
+    col <- if (is.null(density))
+      c("white", "lightblue", "mistyrose", "lightcyan",
+        "lavender", "cornsilk")
+    else par("fg")
+  col <- rep(col, length.out = nx)
+  border <- rep(border, length.out = nx)
+  border_width <- rep(width, length.out = nx)
+  lty <- rep(lty, length.out = nx)
+  angle <- rep(angle, length.out = nx)
+  density <- rep(density, length.out = nx)
+  t2xy <- function(t) {
+    t2p <- twopi * t + init.angle * pi/180
+    list(x = radius * cos(t2p), y = radius * sin(t2p))
+  }
+  for (i in 1:nx) {
+    n <- max(2, floor(edges * dx[i]))
+    P <- t2xy(seq.int(values[i], values[i + 1], length.out = n))
+    polygon(x+c(P$x, 0), y+c(P$y, 0), density = density[i], angle = angle[i],
+            border = border[i],lwd = border_width[i], col = col[i], lty = lty[i], ...)
+  }
 }
-#dev.off()
-set=1
-textMatrix[[set]] =  paste(signif(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 2), "\n(",
-                    signif(moduleTraitPvalue[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 1), ")", sep = "");
-dim(textMatrix[[set]]) = dim(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")])
-labeledHeatmap(Matrix = moduleTraitCor.scaled[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")],
-               xLabels = xLabels,
-               yLabels = module_order,
-               ySymbols = module_order,
-               colorLabels = FALSE,
-               colors = blueWhiteRed(50),
-               textMatrix = textMatrix[[set]],
-               setStdMargins = FALSE,
-               cex.text = 0.7,
-               zlim = c(-3,3),
-               main = paste0(shortLabels[set]," cohort"))
 
 
-moduleTraitCor.scaled[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")]
+shapes[['pie']]$plot <- function (coords, v = NULL, params) 
+{
+    getparam <- function(pname) {
+        p <- params("vertex", pname)
+        if (length(p) != 1 && !is.null(v)) {
+            p <- p[v]
+        }
+        p
+    }
+    vertex.color <- getparam("color")
+    vertex.frame.color <- getparam("frame.color")
+    vertex.frame.width <- getparam("frame.width")
+    vertex.size <- rep(1/200 * getparam("size"), length.out = nrow(coords))
+    vertex.pie <- getparam("pie")
+    vertex.pie.color <- getparam("pie.color")
+    vertex.pie.angle <- getparam("pie.angle")
+    vertex.pie.density <- getparam("pie.density")
+    vertex.pie.lty <- getparam("pie.lty")
+    
+    
+    for (i in seq_len(nrow(coords))) {
+        pie <- if (length(vertex.pie) == 1) {
+            vertex.pie[[1]]
+        }
+        else {
+            vertex.pie[[i]]
+        }
+        col <- if (length(vertex.pie.color) == 1) {
+            vertex.pie.color[[1]]
+        }
+        else {
+            vertex.pie.color[[i]]
+        }
+        mypie(x = coords[i, 1], y = coords[i, 2], pie, radius = vertex.size[i], 
+            edges = 200, col = col, angle = na.omit(vertex.pie.angle[c(i, 1)])[1], 
+            density = na.omit(vertex.pie.density[c(i, 1)])[1], 
+            border = na.omit(vertex.frame.color[c(i, 1)])[1], 
+            lty = na.omit(vertex.pie.lty[c(i, 1)])[1],
+            width = vertex.frame.width)
+      }
+    }
 
-signif(moduleTraitCor[[set]][module_order,c("log2_CT")], 2)
+############
+View(shapes)
+g <- graph.ring(10)
+pie <- lapply(1:10, function(x) sample(1:10,3))
+plot(g, vertex.shape="pie", vertex.pie=pie, vertex.frame.color="black", vertex.frame.width=2,
+     vertex.label=NA, vertex.pie.color=list(heat.colors(5)),
+     vertex.size=seq(10,30,length=10))
+```
 
+```{r}
+mycircle <- function(coords, v=NULL, params) {
+  vertex.color <- params("vertex", "color")
+  if (length(vertex.color) != 1 && !is.null(v)) {
+    vertex.color <- vertex.color[v]
+  }
+  vertex.size  <- 1/200 * params("vertex", "size")
+  if (length(vertex.size) != 1 && !is.null(v)) {
+    vertex.size <- vertex.size[v]
+  }
+  vertex.frame.color <- params("vertex", "frame.color")
+  if (length(vertex.frame.color) != 1 && !is.null(v)) {
+    vertex.frame.color <- vertex.frame.color[v]
+  }
+  vertex.frame.width <- params("vertex", "frame.width")
+  if (length(vertex.frame.width) != 1 && !is.null(v)) {
+    vertex.frame.width <- vertex.frame.width[v]
+  }
+  
+  mapply(coords[,1], coords[,2], vertex.color, vertex.frame.color,
+         vertex.size, vertex.frame.width,
+         FUN=function(x, y, bg, fg, size, lwd) {
+           symbols(x=x, y=y, bg=bg, fg=fg, lwd=lwd,
+                   circles=size, add=TRUE, inches=FALSE)
+         })
+}
 
+add.vertex.shape("fcircle", clip=igraph.shape.noclip,
+		 plot=mycircle, parameters=list(vertex.frame.color=1,
+                                  vertex.frame.width=1))
+```
 
+```{r}
+```
 
-signif(moduleTraitCor[[2]][module_order,c("log2_CT")], 2)
-
-
-ME_dat
-
+```{r}
 
 lnames = load(file = paste0(path_input,"Data/PTB-01-dataInput.RData"))
 lnames = load(file = paste0(path_input,"Data/PTB-02-networkConstruction-auto.RData"))
 load(file=paste0(path_input,"Data/Module_discovery.Rdata"))
 MEs = list();
 varExplained_firstPC <- list()
-
-for (set in 1:nSets){
-  temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
-  temp_ME_order <- orderMEs(temp_ME)
-  MEs[[set]] = list(data = temp_ME_order)
-  temp_PC <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$varExplained)
-  names(temp_PC)<-colnames(temp_ME)
-  varExplained_firstPC[[set]] = list(data = temp_PC)
-}
+set = 1
 
 temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
 temp_ME_order <- orderMEs(temp_ME)
@@ -335,112 +413,129 @@ cor_method="spearman"
 mat2 <- cor(ME_dat,use='pairwise.complete.obs', method = cor_method)
 p.mat2 <- cor.pval.test(ME_dat, ME_dat,method=cor_method, use='pairwise.complete.obs')
 
-tmp1 <- signif(moduleTraitCor[[set]][module_order,c("log2_CT")], 2) %>% as.data.frame()
-tmp1<-tmp[match(rownames(mat), rownames(tmp1)),]
-tmp1
-
 library(igraph)
 library(qgraph)
 # Keep only high correlations
 mat <- mat2
 mat[p.mat2>=0.05] <- 0
-mat
 # th <- 0.3
 # mat[mat<th&mat>-th] <- mat[mat<th&mat>-th]/5
+tmp1 <- signif(moduleTraitCor[[1]][module_order,c("log2_CT")], 2) %>% as.data.frame()
+tmp1<-tmp1[match(rownames(mat), rownames(tmp1)),]
+tmp2 <- signif(moduleTraitCor[[2]][module_order,c("log2_CT")], 2) %>% as.data.frame()
+tmp2<-tmp2[match(rownames(mat), rownames(tmp2)),]
+tmp12 <- sort(c(tmp1,tmp2))
 
-# Make an Igraph object from this matrix:
+
+p.tmp1 <- signif(moduleTraitPvalue[[1]][module_order,c("log2_CT")], 1) %>% as.data.frame()
+p.tmp1<- p.tmp1[match(rownames(mat), rownames(p.tmp1)),]
+p.tmp2 <- signif(moduleTraitPvalue[[2]][module_order,c("log2_CT")], 1) %>% as.data.frame()
+p.tmp2<- p.tmp2[match(rownames(mat), rownames(p.tmp2)),]
+
+sig1 <- symnum(p.tmp1, corr = FALSE, na = FALSE, cutpoints = c(0, 
+    0.001, 0.01, 0.05, 0.1, 1), symbols = c("⁂", "⁑", "*", ".", " "))
+sig2 <- symnum(p.tmp2, corr = FALSE, na = FALSE, cutpoints = c(0, 
+    0.001, 0.01, 0.05, 0.1, 1), symbols = c("⁂", "⁑", "*", ".", " "))
+sig <- data.frame(sig1 = sig1, sig2 = sig2) %>% within(newsig <- paste(sig1,sig2, sep=" "))
+sig<- sig$newsig
+colors <-blueWhiteRed(100,gamma = 0.4)[cut(tmp12, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
+#colors <-colorRampPalette(c("blue","white","red"))(100)[cut(tmp12, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
+colors <- data.frame(color = colors,#natparks.pals("Arches",n=18),
+                      levels = sort(c(tmp1,tmp2)))
+colors1 <- filter(colors,levels%in%tmp1)
+colors2 <- filter(colors,levels%in%tmp2)
+colors1 <- colors1$color[match(tmp1, colors1$levels)] #order by module
+colors2 <- colors2$color[match(tmp2, colors2$levels)] #order by module
+colors = list()
+for(i in 1:18){
+  colors[[i]] = c(colors1[i],colors2[i])
+}
+
+# colors <- data.frame(color = colorRampPalette(c("#4477AA","#BB4444"))(36),#natparks.pals("Arches",n=18),
+#                       levels = sort(c(tmp1,tmp2)))
+# 
+# colors1 <- filter(colors,levels%in%tmp1)
+# colors2 <- filter(colors,levels%in%tmp2)
+# colors1 <- colors1$color[match(tmp1, colors1$levels)] #order by module
+# colors2 <- colors2$color[match(tmp2, colors2$levels)] #order by module
+# colors = list()
+# for(i in 1:18){
+#   colors[[i]] = c(colors1[i],colors2[i])
+# }
+
+color.bar <- function(lut, min, max=-min, nticks=11, ticks=seq(min, max, len=nticks), title='') {
+  scale = (length(lut)-1)/(max-min)
+  plot(c(0,10), c(min,max), type='n', bty='n', xaxt='n', xlab='', yaxt='n', ylab='', main=title)
+  axis(2, ticks, las=1)
+  #axis(1, ticks, las=1)
+  for (i in 1:(length(lut)-1)) {
+    print(lut[i])
+    y = (i-1)/scale + min
+    rect(0,y,10,y+1/scale, col=lut[i], border=NA)
+    #rect(y,0,y+1/scale,10, col=lut[i], border=NA)
+  }
+}
+
+color.bar(colorRampPalette(c("#4477AA","#BB4444"))(100), 0, 100)
+
 network <- graph_from_adjacency_matrix(mat, weighted=T, mode="undirected", diag=F)
 tab <- table(moduleColors) %>% as.data.frame
 node.size <- tab[match(rownames(mat), tab$moduleColors),]$Freq
+node.colors <- c("cyan","#8A553A","#A38DC9","pink","turquoise","#FDFD96","#2E91E5","grey","grey60","tan","#ff5148","#44D044","lightcyan","black","midnightblue","#e5097f","#FFA07A","greenyellow")
+
 e <- get.edgelist(network,names=FALSE)
 l <- qgraph.layout.fruchtermanreingold(e,
                                        vcount=vcount(network),
-                                       area=100,
-                                       repulse.rad=(vcount(network)^2.2)
+                                       area=8*(vcount(network)^2),
+                                       repulse.rad=(vcount(network)^3.1)
                                        )
 
 png(file=paste0(path_output,"/Figure_correlation_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
 
-
-V(matrixnetwork)$color <- colorRampPalette(c("#4477AA","#BB4444"))(100)[tmp]
-
-V(network)$degree <- degree(network)
-uni_all <- seq( min(V(network)$degree), max(V(network)$degree))
-uni_all <- seq(min(tmp),max(tmp),((max(tmp) - min(tmp))/(18 - 1)))
-#uni_all <- seq( min(tmp), max(tmp))
-#uni_all
-tmp
-
-colors <- data.frame(color = cm.colors(length(tmp), rev = T),
-                      levels = tmp)
-
-colors <- data.frame(color = colorRampPalette(c("#4477AA","#BB4444"))(18),#natparks.pals("Arches",n=18),
-                      levels = sort(tmp))
-
-
-colors
-
-
-
-
-colorRampPalette(c("#4477AA","#BB4444"))(100)[tmp]
-
-scale_color_gradientn(colors=natparks.pals("Arches",n=100))
-
-colors
-
-V(network)$degree
-library("RColorBrewer")
-library(wesanderson)
-library(NatParksPalettes)
-natparks.pals("Acadia")
-wes_palette("Zissou1", 18, type = "continuous")
-  
-brewer.pal(n = 18, name = 'RdBu')
-
+layout(matrix(c(1,2), nrow=1), widths=c(3,1))
 plot(network,
      layout= l,
-     vertex.label='',
-     vertex.size=log2(node.size)*2,
+     vertex.label="",
+     vertex.size=log2(node.size)*3.5,
      #vertex.size=node.size*0.02,
-     vertex.shape="pie",
-     vertex.color=rownames(mat),
-     vertex.label.color = ifelse(rownames(mat)%in%c('blue','brown'),  'white','black'),
-     vertex.label.dist=ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 1),
-     vertex.label.degree = ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 92),
+     vertex.color=node.colors,
+     # vertex.label.color = ifelse(rownames(mat)%in%c('blue','brown'),  'white','black'),
+     # vertex.label.dist=ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 1),
+     # vertex.label.degree = ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 92),
      edge.color = adjustcolor(c("#FF681E", "#001164")[(E(network)$weight<0)+1], 0.7),
      edge.width=(E(network)$weight)*5,
-     edge.curved=0.08,
-     vertex.frame.color= adjustcolor(colors$color[match(tmp, colors$levels)],1),
-     vertex.frame.width=5,
+     edge.curved=0.001,
      )
 
-colors$color
-V(network)$degree
-colors$levels
-
-
-colors$color[match(V(network)$degree, colors$levels)]
-
-colors$color[match(tmp, colors$levels)]
-
-
-dev.off()
-tmp
-
-E(network)
-
-
+sig<-c("    ⁂" ," ⁑  ⁂" ,"    *" ,". ." ,"     *" ,"   " ,"   " ,"    ." ,"*    " ,"   " ,"  .  ⁂" ,
+       " *  ⁂",
+       "   ",
+       "    *",
+       "*    ",
+       "*    ",
+       "   ",
+       ".    ")
 plot(network,
      layout= l,
-     vertex.label='',
-     vertex.size=log2(node.size)*2,
-     vertex.color=rownames(mat),
-     vertex.label.color = ifelse(rownames(mat)%in%c('blue','brown'),  'white','black'),
-     vertex.label.dist=ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 1),
-     vertex.label.degree = ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 92),
-     edge.color = adjustcolor(c("#FF681E", "#001164")[(E(network)$weight<0)+1], 0.7),
+     vertex.label=sig,
+     vertex.label.cex=0.65,
+     vertex.size=log2(node.size)*3.5/1.7, 
+     vertex.label.dist = 0.01,
+     #vertex.label.degree = 1,
+     edge.color=NA,
+     vertex.label.degree=0,
+     vertex.label.color='yellow',
+     add=T,
+     vertex.shape="pie",
+     
+     vertex.pie=list(c(10,10)),
+     vertex.pie.color=colors,
+     vertex.label.degree=0.0,
+     margin=c(0,0,0,0),
      )
+
+color.bar(blueWhiteRed(100,gamma = 0.4) , -1.6, 1.6)
+dev.off()
 
 ```
 
