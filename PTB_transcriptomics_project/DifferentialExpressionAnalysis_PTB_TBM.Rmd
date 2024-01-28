@@ -61,7 +61,6 @@ All_sample_RNAseq <- readxl::read_excel(paste0(path_input,"Raw_data/All_sample_R
                                         sheet = "Run1and2") %>% as.data.frame()
 rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
 
-
 load(file=paste0(path_input,"Raw_data/Data_26_27_CT_CNIH4.Rdata.RData"))
 Fludigm_CNIH4_PTB <- get(load(paste0(path_input,'Raw_data/Fludigm_CNIH4_PTB.Rdata')))
 ```
@@ -127,264 +126,25 @@ get_genelist_pathway_kegg <- function(hsa_ID){
   namesodd <-  names[seq(0,length(names),2)]
   namestrue <- gsub("\\;.*","",namesodd)
 }
+
+draw_colnames_45 <- function (coln, gaps, ...) {
+    coord <- pheatmap:::find_coordinates(length(coln), gaps)
+    x     <-  coord$coord - 0.5 * coord$size
+    res   <- grid::textGrob(
+      coln, x = x, y = unit(1, "npc") - unit(3,"bigpts"),
+      vjust = 0.75, hjust = 1, rot = 45, gp = grid::gpar(...)
+    )
+    return(res)
+}
+
+assignInNamespace(
+  x = "draw_colnames",
+  value = "draw_colnames_45",
+  ns = asNamespace("pheatmap")
+)
 ```
 
 ## \*Draft analysis - Playground (just for the experimental stuffs)
-
-```{r}
-mypie <- function(x, y, values, radius, edges=200, col=NULL, angle=45,
-                  density=NULL, border=NULL, lty=NULL, init.angle=90, ...) {
-  values <- c(0, cumsum(values)/sum(values))
-  dx <- diff(values)
-  nx <- length(dx)
-  twopi <- 2 * pi
-  if (is.null(col)) 
-    col <- if (is.null(density)) 
-      c("white", "lightblue", "mistyrose", "lightcyan", 
-        "lavender", "cornsilk")
-    else par("fg")
-  col <- rep(col, length.out = nx)
-  border <- rep(border, length.out = nx)
-  lty <- rep(lty, length.out = nx)
-  angle <- rep(angle, length.out = nx)
-  density <- rep(density, length.out = nx)
-  t2xy <- function(t) {
-    t2p <- twopi * t + init.angle * pi/180
-    list(x = radius * cos(t2p), y = radius * sin(t2p))
-  }
-  for (i in 1:nx) {
-    n <- max(2, floor(edges * dx[i]))
-    P <- t2xy(seq.int(values[i], values[i + 1], length.out = n))
-    polygon(x+c(P$x, 0), y+c(P$y, 0), density = density[i], angle = angle[i], 
-            border = border[i], col = col[i], lty = lty[i], ...)
-  }
-}
-
-.igraph.shape.pie <- function(coords, el=NULL, v=NULL, mode=c("clip", "plot"),
-                                 params, end=c("both", "from", "to")) {
-
-  mode=match.arg(mode)
-  end =match.arg(end)
-
-  #####################################################################
-  ## clipping mode, this is the same as for circle
-
-  if (mode=="clip") {
-    if (length(coords)==0) { return (coords) }     
-
-    vertex.size <- 1/200 * params("vertex", "size")
-
-    if (end=="from") {
-      phi <- atan2(coords[,4] - coords[,2], coords[,3] - coords[,1])
-      vsize.from <- if (length(vertex.size)==1) {
-        vertex.size
-      } else {
-        vertex.size[ el[,1] ]
-      }
-      res <- cbind(coords[,1] + vsize.from*cos(phi),
-                   coords[,2] + vsize.from*sin(phi) )
-    } else if (end=="to") {
-      phi <- atan2(coords[,4] - coords[,2], coords[,3] - coords[,1])
-      r <- sqrt( (coords[,3] - coords[,1])^2 + (coords[,4] - coords[,2])^2 )
-      vsize.to <- if (length(vertex.size)==1) {
-        vertex.size
-      } else {
-        vertex.size[ el[,2] ]
-      }
-      res <- cbind(coords[,1] + (r-vsize.to)*cos(phi),
-                   coords[,2] + (r-vsize.to)*sin(phi) )
-    } else if (end=="both") {
-      phi <- atan2(coords[,4] - coords[,2], coords[,3] - coords[,1])
-      r <- sqrt( (coords[,3] - coords[,1])^2 + (coords[,4] - coords[,2])^2 )
-      vsize.from <- if (length(vertex.size)==1) {
-        vertex.size
-      } else {
-        vertex.size[ el[,1] ]
-      }
-      vsize.to <- if (length(vertex.size)==1) {
-        vertex.size
-      } else {
-        vertex.size[ el[,2] ]
-      }
-      res <- cbind(coords[,1] + vsize.from*cos(phi),
-                   coords[,2] + vsize.from*sin(phi),
-                   coords[,1] + (r-vsize.to)*cos(phi),
-                   coords[,2] + (r-vsize.to)*sin(phi) )
-    }
-
-    res
-
-  #####################################################################
-  ## plotting mode
-
-  } else if (mode=="plot") {
-    getparam <- function(pname) {
-      p <- params("vertex", pname)
-      if (length(p) != 1 && !is.null(v)) {
-        p <- p[v]
-      }
-      p
-    }
-    vertex.color       <- getparam("color")
-    vertex.frame.color <- getparam("frame.color")
-    vertex.size        <- rep(1/200 * getparam("size"), length=nrow(coords))
-    vertex.pie         <- getparam("pie")
-    vertex.pie.color   <- getparam("pie.color")
-    vertex.pie.angle   <- getparam("pie.angle")
-    vertex.pie.density <- getparam("pie.density")
-    vertex.pie.lty     <- getparam("pie.lty")
-
-    for (i in seq_len(nrow(coords))) {
-      pie <- if(length(vertex.pie)==1) {
-        vertex.pie
-      } else {
-        vertex.pie[[i]]
-      }
-      col <- if (length(vertex.pie.color)==1) {
-        vertex.pie.color[[1]]
-      } else {
-        vertex.pie.color[[i]]
-      }
-      mypie(x=coords[i,1], y=coords[i,2], pie,
-            radius=vertex.size[i], edges=200, col=col,
-            angle=na.omit(vertex.pie.angle[c(i,1)])[1],
-            density=na.omit(vertex.pie.density[c(i,1)])[1],
-            border=na.omit(vertex.frame.color[c(i,1)])[1],
-            lty=na.omit(vertex.pie.lty[c(i,1)])[1])
-    }
-  }
-}
-
-add.vertex.shape("pie2", 
-                 clip=igraph.shape.noclip,
-                 plot=mypie)
-
-```
-
-```{r}
-
-library(igraph)
-unlockBinding(".igraph.shapes", asNamespace("igraph"))
-unlockBinding("i.default.values", asNamespace("igraph"))
-
-shapes <- igraph:::.igraph.shapes
-defaults <- igraph:::i.default.values
-
-mypie <- function(x, y, values, radius, edges=200, col=NULL, angle=45,width=NULL,
-                  density=NULL, border=NULL, lty=NULL, init.angle=90, ...) {
-  values <- c(0, cumsum(values)/sum(values))
-  dx <- diff(values)
-  nx <- length(dx)
-  twopi <- 2 * pi
-  if (is.null(col))
-    col <- if (is.null(density))
-      c("white", "lightblue", "mistyrose", "lightcyan",
-        "lavender", "cornsilk")
-    else par("fg")
-  col <- rep(col, length.out = nx)
-  border <- rep(border, length.out = nx)
-  border_width <- rep(width, length.out = nx)
-  lty <- rep(lty, length.out = nx)
-  angle <- rep(angle, length.out = nx)
-  density <- rep(density, length.out = nx)
-  t2xy <- function(t) {
-    t2p <- twopi * t + init.angle * pi/180
-    list(x = radius * cos(t2p), y = radius * sin(t2p))
-  }
-  for (i in 1:nx) {
-    n <- max(2, floor(edges * dx[i]))
-    P <- t2xy(seq.int(values[i], values[i + 1], length.out = n))
-    polygon(x+c(P$x, 0), y+c(P$y, 0), density = density[i], angle = angle[i],
-            border = border[i],lwd = border_width[i], col = col[i], lty = lty[i], ...)
-  }
-}
-
-
-shapes[['pie']]$plot <- function (coords, v = NULL, params) 
-{
-    getparam <- function(pname) {
-        p <- params("vertex", pname)
-        if (length(p) != 1 && !is.null(v)) {
-            p <- p[v]
-        }
-        p
-    }
-    vertex.color <- getparam("color")
-    vertex.frame.color <- getparam("frame.color")
-    vertex.frame.width <- getparam("frame.width")
-    vertex.size <- rep(1/200 * getparam("size"), length.out = nrow(coords))
-    vertex.pie <- getparam("pie")
-    vertex.pie.color <- getparam("pie.color")
-    vertex.pie.angle <- getparam("pie.angle")
-    vertex.pie.density <- getparam("pie.density")
-    vertex.pie.lty <- getparam("pie.lty")
-    
-    
-    for (i in seq_len(nrow(coords))) {
-        pie <- if (length(vertex.pie) == 1) {
-            vertex.pie[[1]]
-        }
-        else {
-            vertex.pie[[i]]
-        }
-        col <- if (length(vertex.pie.color) == 1) {
-            vertex.pie.color[[1]]
-        }
-        else {
-            vertex.pie.color[[i]]
-        }
-        mypie(x = coords[i, 1], y = coords[i, 2], pie, radius = vertex.size[i], 
-            edges = 200, col = col, angle = na.omit(vertex.pie.angle[c(i, 1)])[1], 
-            density = na.omit(vertex.pie.density[c(i, 1)])[1], 
-            border = na.omit(vertex.frame.color[c(i, 1)])[1], 
-            lty = na.omit(vertex.pie.lty[c(i, 1)])[1],
-            width = vertex.frame.width)
-      }
-    }
-
-############
-View(shapes)
-g <- graph.ring(10)
-pie <- lapply(1:10, function(x) sample(1:10,3))
-plot(g, vertex.shape="pie", vertex.pie=pie, vertex.frame.color="black", vertex.frame.width=2,
-     vertex.label=NA, vertex.pie.color=list(heat.colors(5)),
-     vertex.size=seq(10,30,length=10))
-```
-
-```{r}
-mycircle <- function(coords, v=NULL, params) {
-  vertex.color <- params("vertex", "color")
-  if (length(vertex.color) != 1 && !is.null(v)) {
-    vertex.color <- vertex.color[v]
-  }
-  vertex.size  <- 1/200 * params("vertex", "size")
-  if (length(vertex.size) != 1 && !is.null(v)) {
-    vertex.size <- vertex.size[v]
-  }
-  vertex.frame.color <- params("vertex", "frame.color")
-  if (length(vertex.frame.color) != 1 && !is.null(v)) {
-    vertex.frame.color <- vertex.frame.color[v]
-  }
-  vertex.frame.width <- params("vertex", "frame.width")
-  if (length(vertex.frame.width) != 1 && !is.null(v)) {
-    vertex.frame.width <- vertex.frame.width[v]
-  }
-  
-  mapply(coords[,1], coords[,2], vertex.color, vertex.frame.color,
-         vertex.size, vertex.frame.width,
-         FUN=function(x, y, bg, fg, size, lwd) {
-           symbols(x=x, y=y, bg=bg, fg=fg, lwd=lwd,
-                   circles=size, add=TRUE, inches=FALSE)
-         })
-}
-
-add.vertex.shape("fcircle", clip=igraph.shape.noclip,
-		 plot=mycircle, parameters=list(vertex.frame.color=1,
-                                  vertex.frame.width=1))
-```
-
-```{r}
-```
 
 ```{r}
 
@@ -433,9 +193,9 @@ p.tmp2 <- signif(moduleTraitPvalue[[2]][module_order,c("log2_CT")], 1) %>% as.da
 p.tmp2<- p.tmp2[match(rownames(mat), rownames(p.tmp2)),]
 
 sig1 <- symnum(p.tmp1, corr = FALSE, na = FALSE, cutpoints = c(0, 
-    0.001, 0.01, 0.05, 0.1, 1), symbols = c("⁂", "⁑", "*", ".", " "))
+    0.001, 0.01, 0.05, 0.1, 1), symbols = c("*** ", " **", " *", "  .", "     "))
 sig2 <- symnum(p.tmp2, corr = FALSE, na = FALSE, cutpoints = c(0, 
-    0.001, 0.01, 0.05, 0.1, 1), symbols = c("⁂", "⁑", "*", ".", " "))
+    0.001, 0.01, 0.05, 0.1, 1), symbols = c("  ***", "** ", "* ", ".  ", "     "))
 sig <- data.frame(sig1 = sig1, sig2 = sig2) %>% within(newsig <- paste(sig1,sig2, sep=" "))
 sig<- sig$newsig
 colors <-blueWhiteRed(100,gamma = 0.4)[cut(tmp12, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
@@ -482,6 +242,8 @@ network <- graph_from_adjacency_matrix(mat, weighted=T, mode="undirected", diag=
 tab <- table(moduleColors) %>% as.data.frame
 node.size <- tab[match(rownames(mat), tab$moduleColors),]$Freq
 node.colors <- c("cyan","#8A553A","#A38DC9","pink","turquoise","#FDFD96","#2E91E5","grey","grey60","tan","#ff5148","#44D044","lightcyan","black","midnightblue","#e5097f","#FFA07A","greenyellow")
+node.label.size <- c(0.4,0.55,0.65,0.65,0.65,0.65,0.65,0.65,0.65,0.65,0.5,0.5,0.65,0.65,0.65,0.65,0.65,0.65)
+
 
 e <- get.edgelist(network,names=FALSE)
 l <- qgraph.layout.fruchtermanreingold(e,
@@ -492,7 +254,7 @@ l <- qgraph.layout.fruchtermanreingold(e,
 
 png(file=paste0(path_output,"/Figure_correlation_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
 
-layout(matrix(c(1,2), nrow=1), widths=c(3,1))
+#layout(matrix(c(1,2), nrow=1), widths=c(3,1))
 plot(network,
      layout= l,
      vertex.label="",
@@ -507,18 +269,22 @@ plot(network,
      edge.curved=0.001,
      )
 
-sig<-c("    ⁂" ," ⁑  ⁂" ,"    *" ,". ." ,"     *" ,"   " ,"   " ,"    ." ,"*    " ,"   " ,"  .  ⁂" ,
-       " *  ⁂",
-       "   ",
-       "    *",
-       "*    ",
-       "*    ",
-       "   ",
-       ".    ")
+# sig<-c("    ⁂" ," ⁑  ⁂" ,"    *" ,". ." ,"     *" ,"   " ,"   " ,"    ." ,"*    " ,"   " ,"  .  ⁂" ,
+#        " *  ⁂",
+#        "   ",
+#        "    *",
+#        "*    ",
+#        "*    ",
+#        "   ",
+#        ".    ")
 plot(network,
      layout= l,
      vertex.label=sig,
-     vertex.label.cex=0.65,
+     vertex.label.cex=node.label.size,
+     
+     
+     
+     
      vertex.size=log2(node.size)*3.5/1.7, 
      vertex.label.dist = 0.01,
      #vertex.label.degree = 1,
@@ -528,16 +294,69 @@ plot(network,
      add=T,
      vertex.shape="pie",
      
+     
      vertex.pie=list(c(10,10)),
      vertex.pie.color=colors,
      vertex.label.degree=0.0,
      margin=c(0,0,0,0),
      )
 
-color.bar(blueWhiteRed(100,gamma = 0.4) , -1.6, 1.6)
+#color.bar(blueWhiteRed(100,gamma = 0.4) , -1.6, 1.6)
 dev.off()
 
 ```
+
+scatter plot CNIH4 vs ZAP70, PLCG1, CTLA4
+
+```{r}
+library(ggpmisc)
+library(ggpubr)
+library(cowplot)
+df <- vst_data %>%select(c('CNIH4','ZAP70','PLCG1','CTLA4'))
+l <- c('ZAP70','PLCG1','CTLA4')
+p = list()
+for(i in 1:length(l)){
+  p1<-ggplot(data=df, aes_string(x='CNIH4',y=as.name(l[i])))+
+  geom_point(alpha=0.2,col='red')+
+  theme_bw()+
+  stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7,method = 'spearman')+
+  theme_bw()+ 
+  ylab(paste0(as.name(l[i])," expression"))+
+  xlab("CNIH4 expression")+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+  p[[i]]<-ggdraw(p1)
+  
+}
+
+png(file=paste0(path_output,"/Figure4B_scatterplot_CNIH4vsZAP70_PLCG1_CTLA4.png"),res=600, units = 'in', width=21, height =7)#30:18
+ggpubr::ggarrange(
+p[[1]],p[[2]],
+p[[3]],
+ncol =3,nrow=1)
+dev.off()
+
+
+png(file=paste0(path_output,"/Figure4B_scatterplot_CNIH4vsCTLA4.png"),res=600, units = 'in', width=7, height =7)
+p1
+dev.off()
+```
+
+```{r}
+
+```
+
+other
 
 ```{r}
 library(ggplot2)
