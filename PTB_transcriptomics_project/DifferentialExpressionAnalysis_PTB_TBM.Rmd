@@ -68,6 +68,8 @@ l<-load(file=paste0(path_input,"Raw_data/PTB_TOM_10000-block.1.RData"))
 #as.matrix(TOM)
 clinical_2_discovery <- filter(clinical_2,cohort=='Discovery')
 rownames(clinical_2_discovery) <- clinical_2_discovery$LIMS_ID
+
+load(file=paste0(path_input,"Data/Gene Significance and Module Membership_clinical_trait.Rdata"))
 ```
 
 ```{r}
@@ -90,6 +92,7 @@ rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
 
 ```{r}
 library(pheatmap)
+
 posterior_predict_hurdle_gaussian <- function(i, prep, ...) {
   mu <- brms::get_dpar(prep, "mu", i = i)
   sigma <- brms::get_dpar(prep, "sigma", i = i)
@@ -340,6 +343,222 @@ plot(network,
 #color.bar(blueWhiteRed(100,gamma = 0.4) , -1.6, 1.6)
 dev.off()
 
+```
+
+network brown module
+
+```{r}
+
+```
+
+```{r}
+library(ggraph)
+
+adj <- TOM1
+#adj <- adj[brown_genes,brown_genes]
+adj <- adj[unique(c(brown_genes[brown_genes%nin%hubgenes_CT],hubgenes_CT[rev(1:length(hubgenes_CT))])),
+           unique(c(brown_genes[brown_genes%nin%hubgenes_CT],hubgenes_CT[rev(1:length(hubgenes_CT))]))]
+diag(adj) <- NA
+adj[adj < quantile(adj, probs = 0.3, na.rm = T)] = 0
+
+network <- graph_from_adjacency_matrix(adj, weighted=T, mode="undirected", diag=F)
+
+ggraph(network, 
+       layout = 'nicely'
+       ) +
+  geom_edge_link0(width = (E(network)$weight)/10,
+                    colour = "grey") +
+  geom_node_voronoi(fill = ifelse(V(network)$name%in%hubgenes_CT,'brown','darkgreen'),
+                    col = 'black',
+                    max.radius = 1)+
+  geom_edge_link(alpha = 0.3) +
+  geom_node_point()
+  
+    # geom_node_point(
+    #   fill = ifelse(V(network)$name%in%hubgenes_CT,'brown','darkgreen'),
+    #   col = 'black',stroke=1.5,shape = 21,
+    #                 size = ifelse(V(network)$name%in%hubgenes_CT,  25,1.5),
+    #                 alpha=ifelse(V(network)$name%in%hubgenes_CT,  1,0.5)) +
+    geom_node_text(label = ifelse(V(network)$name%in%hubgenes_CT,V(network)$name,''), 
+                   family = "serif",color='white') + #scale_color_manual(values = 'black')+
+    theme_graph()
+```
+
+```{r}http://127.0.0.1:42081/graphics/plot_zoom_png?width=524&height=757}
+library(graphlayouts)
+hubgenes_CT <- read.csv(paste0(path_input,"Data/Modules-Hubgenes_CT_value.csv"))$gene
+brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>% filter(module=='brown')
+brown_genes <- brown_module$genes
+adj <- TOM1
+adj <- adj[brown_genes,brown_genes]
+diag(adj) <- NA
+adj[adj < quantile(adj, probs = 0.3, na.rm = T)] = 0
+network <- graph_from_adjacency_matrix(adj, weighted=T, mode="undirected", diag=F)
+
+e <- get.edgelist(network,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,
+                                       vcount=vcount(network),
+                                       area=12*(vcount(network)^2),
+                                       repulse.rad=(vcount(network)^3.1)
+                                       )
+
+l <- qgraph.layout.fruchtermanreingold(e,
+                                       vcount=vcount(network),
+                                       area=120*(vcount(network)^2),
+                                       repulse.rad=(vcount(network)^8))
+l <- qgraph.layout.fruchtermanreingold(e,vcount=vcount(network))
+png(file=paste0(path_output,"/Figure_brown_tmp.png"),res=900, units = 'in', width=6.5, height = 6.5)
+
+plot(network,
+     layout= l,#l,
+     vertex.label='',
+     vertex.size = ifelse(V(network)$name%in%hubgenes_CT,  25,2),
+     vertex.color = ifelse(V(network)$name%in%hubgenes_CT,'purple','darkgreen'),
+     edge.width=(E(network)$weight))
+dev.off()
+```
+
+```{r}
+library(igraph)
+library(qgraph)
+load(file=paste0(path_input,"Raw_data/PTB_TOM_10000-block.1.RData"))
+TOM1 <- as.matrix(TOM)
+brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>% filter(module=='brown')
+brown_genes <- brown_module$genes
+
+colnames(TOM1) <- colnames(multiExpr[[1]]$data)
+rownames(TOM1) <- colnames(multiExpr[[1]]$data)
+brown_TOM <- TOM1[brown_genes[1:5],brown_genes[1:5]]
+
+# network <- graph_from_adjacency_matrix(brown_TOM, weighted=T, mode="undirected", diag=F)
+# e <- get.edgelist(network,names=FALSE)
+# l <- qgraph.layout.fruchtermanreingold(e,
+#                                        vcount=vcount(network),
+#                                        area=8*(vcount(network)^2),
+#                                        repulse.rad=(vcount(network)^3.1)
+#                                        )
+
+
+adj <- TOM1
+adj <- adj[brown_genes,brown_genes]
+diag(adj) <- NA
+#max(adj, na.rm = T)
+adj[adj < quantile(adj, probs = 0.3, na.rm = T)] = 0
+#adj[adj != 1] = 0
+color <- "brown" 
+nodesize <- 50
+Hubsize=75
+node_cutoff = 50
+network <- graph.adjacency(adj, mode ="undirected", weighted=T)
+coexp_genes <- c("CNIH4","ZAP70")
+if(!is.null(coexp_genes)) {
+  label_name <- V(network)$name
+  label_name[which(label_name %nin% coexp_genes)] <- ""
+  nodesize <- rep(nodesize,length(label_name))
+  nodesize[which(label_name %in% coexp_genes)] <- Hubsize
+  network <- set.vertex.attribute(network, "label_name", value=label_name)
+  network <- set.vertex.attribute(network, "nodesize", value=nodesize)
+}
+# V(network)$name
+## adding atribute of gradient color
+# network <- set.vertex.attribute(network, "gradient_color", value=gradient_color)
+# network <- set.vertex.attribute(network, "gradient_color", value=gradient_color)
+# V(network)$gradient_color
+network <- simplify(network)  # removes self-loops
+V(network)$color <- ifelse(rownames(adj) %in% c('CNIH4','ZAP70'),'purple','darkgreen')#color
+if (!is.null(node_cutoff)) {
+  node_cutoff <- min(node_cutoff,length(degree(network)))
+  degree_cutoff <- sort(as.vector(degree(network)),decreasing = T)[node_cutoff] 
+  deg_filter <- degree(network) < degree_cutoff
+  #network <- igraph::delete.vertices(network, deg_filter)
+}
+E(network)$width <- E(network)$weight
+
+s <- abs(log(abs(geneModuleMembership[brown_genes,'MMbrown'])))+10
+png(file=paste0(path_output,"/Figure_brown_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
+plot(network,
+     #vertex.size =19,
+     #vertex.label.color =  'white',
+     vertex.label = '',
+     vertex.size=geneModuleMembership[brown_genes,'MMbrown']+10,
+     )
+dev.off()
+```
+
+```{r}
+library(RCy3)
+library(ggrepel)
+library(igraph)
+
+draw_wgcna_top_genes_module_network <- 
+function(TOM,gene_list, node_cutoff = NULL , gradient_color=NULL,
+         module_color = NULL,coexp_genes = NULL,PPI_genes = NULL,
+         nodesize=50, Hubsize=75, title = NULL, collection = NULL){
+  adj <- TOM
+  adj <- adj[gene_list,gene_list]
+  diag(adj) <- NA
+  #max(adj, na.rm = T)
+  adj[adj < quantile(adj, probs = 0.3, na.rm = T)] = 0
+  #adj[adj != 1] = 0
+  color <- module_color 
+  network <- graph.adjacency(adj, mode ="undirected", weighted=T)
+  if(!is.null(coexp_genes)) {
+    label_name <- V(network)$name
+    label_name[which(label_name %nin% coexp_genes)] <- ""
+    nodesize <- rep(nodesize,length(label_name))
+    nodesize[which(label_name %in% coexp_genes)] <- Hubsize
+    network <- set.vertex.attribute(network, "label_name", value=label_name)
+    network <- set.vertex.attribute(network, "nodesize", value=nodesize)
+  }
+  # V(network)$name
+  ## adding atribute of gradient color
+  # network <- set.vertex.attribute(network, "gradient_color", value=gradient_color)
+  # network <- set.vertex.attribute(network, "gradient_color", value=gradient_color)
+  # V(network)$gradient_color
+  network <- simplify(network)  # removes self-loops
+  V(network)$color <- color
+  if (!is.null(node_cutoff)) {
+    node_cutoff <- min(node_cutoff,length(degree(network)))
+    degree_cutoff <- sort(as.vector(degree(network)),decreasing = T)[node_cutoff] 
+    deg_filter <- degree(network) < degree_cutoff
+    network <- igraph::delete.vertices(network, deg_filter)
+  }
+  E(network)$width <- E(network)$weight
+  library(RCy3)
+  cytoscapePing() ## open Cytoscape by cmd Cytoscape &
+  createNetworkFromIgraph(network, title = title,
+                          collection = paste0("Igraph Collection ", collection))
+}
+```
+
+```{r}
+# adjacency = adjacency(rbind(multiExpr[[1]]$data,multiExpr[[2]]$data),
+#                       power = 5,type ="unsigned")
+# TOM = TOMsimilarity(adjacency)
+brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>%filter(module=='brown')
+brown_genes <- brown_module$genes
+TOM <- as.matrix(TOM)
+colnames(TOM) <- colnames(multiExpr[[1]]$data)
+rownames(TOM) <- colnames(multiExpr[[1]]$data)
+
+hub_coexp_genes <- c("CNIH4", "ZAP70")
+
+draw_wgcna_top_genes_module_network(TOM = TOM, gene_list = brown_genes,node_cutoff = 50,
+                    module_color = "brown", 
+                    #gradient_color=gene_list_HR$Log_HR,
+                    coexp_genes = hub_coexp_genes,
+                    title = paste0(module," network"),
+                    collection = "for Mortality in HIVneg")
+TOM
+```
+
+```{r}
+adjacency = adjacency(rbind(multiExpr[[1]]$data,multiExpr[[2]]$data),
+                      power = 8,type ="unsigned")
+TOM = TOMsimilarity(adjacency)
+ 
+colnames(TOM) <- colnames(adjacency)
+rownames(TOM) <- rownames(adjacency)
 ```
 
 scatter plot CNIH4 vs ZAP70, PLCG1, CTLA4
@@ -714,6 +933,7 @@ p_CNIH4
 ```
 
 ```{r}
+library(parameters)
 df1 <- vst_data %>%select(c('CNIH4','CT_mean')) %>% mutate(CT_Xpert_mean = CT_mean, CNIH4_Norm = CNIH4)
 df2 <- Data_26_27_CT %>%select(c('CNIH4','NAT')) %>% mutate(CT_Xpert_mean = NAT, CNIH4_Norm = CNIH4)
 df3 <- Fludigm_CNIH4_PTB %>%select(c('CNIH4_Norm','GAPDH','CT_Xpert_mean')) %>% filter(GAPDH<11)
@@ -780,10 +1000,10 @@ p <- ggplot(data=d_pred_CNIH4,aes(x=CNIH4_Norm,y=CT_pred))+
         legend.title = element_text( colour="black", size=12),
         legend.key = element_rect(colour = NA),
         strip.text=element_text(face = "bold",size=12)) +
-  annotate(geom="text",label='atop(bold("p < 2e-16"))',x=xpos[i],y=37,size=7,
+  annotate(geom="text",label='atop(bold("p = 0.0085"))',x=xpos[i],y=37,size=7,
               col="black", parse = TRUE)
 
-png(file=paste0(path_output,"/PTB_CNIH4.png"),res=400, units = 'in', width=5, height = 5)
+png(file=paste0(path_output,"/TBM_CNIH4.png"),res=400, units = 'in', width=5, height = 5)
 p
 dev.off()
 ```
