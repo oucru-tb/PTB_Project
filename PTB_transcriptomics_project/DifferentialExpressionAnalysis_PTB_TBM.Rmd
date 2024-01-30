@@ -353,35 +353,46 @@ network brown module
 
 ```{r}
 library(ggraph)
-
+#load(file=paste0(path_input,"Raw_data/PTB_TOM_10000-block.1.RData"))
+hubgenes_CT <- read.csv(paste0(path_input,"Data/Modules-Hubgenes_CT_value.csv"))$gene
+#TOM1 <- as.matrix(TOM)
+colnames(TOM1) <- colnames(multiExpr[[1]]$data)
+rownames(TOM1) <- colnames(multiExpr[[1]]$data)
 adj <- TOM1
 #adj <- adj[brown_genes,brown_genes]
-adj <- adj[unique(c(brown_genes[brown_genes%nin%hubgenes_CT],hubgenes_CT[rev(1:length(hubgenes_CT))])),
-           unique(c(brown_genes[brown_genes%nin%hubgenes_CT],hubgenes_CT[rev(1:length(hubgenes_CT))]))]
+brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>% filter(module=='brown')
+brown_genes <- brown_module$genes
+tmp <- data.frame(brown = abs(geneModuleMembership[brown_genes,'MMbrown']),
+                  genes = brown_genes)
+brown_100 <- tmp[order(tmp$brown,decreasing =TRUE),][1:100,]$genes
+
+adj <- adj[c(brown_100[brown_100%nin%hubgenes_CT],
+                    hubgenes_CT[rev(1:length(hubgenes_CT))]),
+           
+           c(brown_100[brown_100%nin%hubgenes_CT],
+                    hubgenes_CT[rev(1:length(hubgenes_CT))])]
 diag(adj) <- NA
 adj[adj < quantile(adj, probs = 0.3, na.rm = T)] = 0
 
 network <- graph_from_adjacency_matrix(adj, weighted=T, mode="undirected", diag=F)
+network <- simplify(network)
 
+
+png(file=paste0(path_output,"/Figure_brown.png"),res=900, units = 'in', width=11, height = 11)
 ggraph(network, 
-       layout = 'nicely'
+       layout = 'kk'
        ) +
-  geom_edge_link0(width = (E(network)$weight)/10,
+  geom_edge_link0(width = (E(network)$weight)*1.1,
                     colour = "grey") +
-  geom_node_voronoi(fill = ifelse(V(network)$name%in%hubgenes_CT,'brown','darkgreen'),
-                    col = 'black',
-                    max.radius = 1)+
-  geom_edge_link(alpha = 0.3) +
-  geom_node_point()
-  
-    # geom_node_point(
-    #   fill = ifelse(V(network)$name%in%hubgenes_CT,'brown','darkgreen'),
-    #   col = 'black',stroke=1.5,shape = 21,
-    #                 size = ifelse(V(network)$name%in%hubgenes_CT,  25,1.5),
-    #                 alpha=ifelse(V(network)$name%in%hubgenes_CT,  1,0.5)) +
+    geom_node_point(
+      fill = ifelse(V(network)$name%in%hubgenes_CT,'brown','darkgreen'),
+      col = 'black',stroke=1.5,shape = 21,
+                    size = ifelse(V(network)$name%in%hubgenes_CT,  25,5),
+                    alpha=ifelse(V(network)$name%in%hubgenes_CT,  1,0.5)) +
     geom_node_text(label = ifelse(V(network)$name%in%hubgenes_CT,V(network)$name,''), 
-                   family = "serif",color='white') + #scale_color_manual(values = 'black')+
+                   family = "serif",color='white') + 
     theme_graph()
+dev.off()
 ```
 
 ```{r}http://127.0.0.1:42081/graphics/plot_zoom_png?width=524&height=757}
@@ -441,9 +452,16 @@ brown_TOM <- TOM1[brown_genes[1:5],brown_genes[1:5]]
 
 adj <- TOM1
 adj <- adj[brown_genes,brown_genes]
+adj <- adj[c(brown_100[brown_100%nin%hubgenes_CT],
+                    hubgenes_CT[rev(1:length(hubgenes_CT))]),
+           
+           c(brown_100[brown_100%nin%hubgenes_CT],
+                    hubgenes_CT[rev(1:length(hubgenes_CT))])]
 diag(adj) <- NA
 #max(adj, na.rm = T)
 adj[adj < quantile(adj, probs = 0.3, na.rm = T)] = 0
+
+
 #adj[adj != 1] = 0
 color <- "brown" 
 nodesize <- 50
@@ -470,17 +488,78 @@ if (!is.null(node_cutoff)) {
   node_cutoff <- min(node_cutoff,length(degree(network)))
   degree_cutoff <- sort(as.vector(degree(network)),decreasing = T)[node_cutoff] 
   deg_filter <- degree(network) < degree_cutoff
-  #network <- igraph::delete.vertices(network, deg_filter)
+  network <- igraph::delete.vertices(network, deg_filter)
 }
 E(network)$width <- E(network)$weight
-
+par(mar=c(1,1,1,1))
 s <- abs(log(abs(geneModuleMembership[brown_genes,'MMbrown'])))+10
 png(file=paste0(path_output,"/Figure_brown_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
 plot(network,
      #vertex.size =19,
      #vertex.label.color =  'white',
      vertex.label = '',
-     vertex.size=geneModuleMembership[brown_genes,'MMbrown']+10,
+     
+     #vertex.size=ifelse(V(network)$name%in%hubgenes_CT,  25,5),
+     #vertex.color = ifelse(V(network)$name %in%hubgenes_CT,'purple','darkgreen')
+     )
+dev.off()
+```
+
+```{r}
+load(file=paste0(path_input,"Raw_data/PTB_TOM_10000-block.1.RData"))
+TOM1 <- as.matrix(TOM)
+colnames(TOM1) <- colnames(multiExpr[[1]]$data)
+rownames(TOM1) <- colnames(multiExpr[[1]]$data)
+brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>% filter(module=='brown')
+brown_genes <- brown_module$genes
+
+tmp <- data.frame(brown = abs(geneModuleMembership[brown_genes,'MMbrown']),
+                  genes = brown_genes)
+brown100 <- tmp[order(tmp$brown,decreasing = T),][1:100,'genes']
+
+
+adj <- TOM1
+adj <- adj[brown_genes,brown_genes]
+
+#adj <- adj[brown100,brown100]
+
+diag(adj) <- NA
+adj[adj < quantile(adj, probs = 0.3, na.rm = T)] = 0
+
+color <- "brown"
+nodesize <- 50
+Hubsize=75
+node_cutoff = 100
+network <- graph.adjacency(adj, mode ="undirected", weighted=T)
+coexp_genes <- c('CNIH4')
+if(!is.null(coexp_genes)) {
+  label_name <- V(network)$name
+  label_name[which(label_name %nin% coexp_genes)] <- ""
+  nodesize <- rep(nodesize,length(label_name))
+  nodesize[which(label_name %in% coexp_genes)] <- Hubsize
+  network <- set.vertex.attribute(network, "label_name", value=label_name)
+  network <- set.vertex.attribute(network, "nodesize", value=nodesize)
+}
+
+
+network <- simplify(network)  # removes self-loops
+if (!is.null(node_cutoff)) {
+  # node_cutoff <- min(node_cutoff,length(degree(network)))
+  # degree_cutoff <- sort(as.vector(degree(network)),decreasing = T)[node_cutoff]
+  # deg_filter <- degree(network) < degree_cutoff
+  
+  deg_filter <- V(network)$name %nin% brown100
+  network <- igraph::delete.vertices(network, deg_filter)
+}
+E(network)$width <- E(network)$weight
+png(file=paste0(path_output,"/Figure_brown_network.png"),res=900, units = 'in', width=10, height = 10)
+plot(network,
+     vertex.label = ifelse(V(network)$name%in%hubgenes_CT,V(network)$name,''),
+     vertex.label.color = 'white',
+     edge.width = E(network)$weight*2,
+     vertex.color = ifelse(V(network)$name%in%hubgenes_CT,'brown','darkgreen'),
+     vertex.size = ifelse(V(network)$name%in%hubgenes_CT, 25,10)
+      
      )
 dev.off()
 ```
