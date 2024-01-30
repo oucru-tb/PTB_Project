@@ -38,8 +38,8 @@ library(ggcorrplot)
 library(broom)
 library(rms)
 library(tidyverse)
-library("stabs")
-library("mboost")
+library(stabs)
+library(mboost)
 library(DESeq2)
 library(CEMiTool)
 library(igraph)
@@ -64,26 +64,30 @@ rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
 load(file=paste0(path_input,"Raw_data/Data_26_27_CT_CNIH4.Rdata.RData"))
 Fludigm_CNIH4_PTB <- get(load(paste0(path_input,'Raw_data/Fludigm_CNIH4_PTB.Rdata')))
 
-l<-load(file=paste0(path_input,"Raw_data/PTB_TOM_10000-block.1.RData"))
-#as.matrix(TOM)
+ModuleHubgeneCT <- read.csv(paste0(path_input,"Data/Modules-Hubgenes_CT_value.csv"))
+load(file=paste0(path_input,"Data/Gene Significance and Module Membership_clinical_trait.Rdata"))
+load(file = paste0(path_input,"Data/PTB-01-dataInput.RData"))
+load(file = paste0(path_input,"Data/PTB-02-networkConstruction-auto.RData"))
+load(file = paste0(path_input,"Data/Module_discovery.Rdata"))
+load(file=paste0(path_input,"Raw_data/PTB_TOM_10000-block.1.RData"))
+TOM1 <- as.matrix(TOM)
+colnames(TOM1) <- colnames(multiExpr[[1]]$data)
+rownames(TOM1) <- colnames(multiExpr[[1]]$data)
+
 clinical_2_discovery <- filter(clinical_2,cohort=='Discovery')
 rownames(clinical_2_discovery) <- clinical_2_discovery$LIMS_ID
-
-load(file=paste0(path_input,"Data/Gene Significance and Module Membership_clinical_trait.Rdata"))
 ```
 
 ```{r}
-
 vst_ptb_tbm <- rbind.fill(vst_data,tbm_vst)
 vst_ptb_tbm %<>% mutate(Type=ifelse(LIMS_ID %in% vst_data$LIMS_ID,"PTB","TBM"))
-#rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
 
 healthy_ComBat <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,trial_number %in% c('HV','43TB'))$LIMS_ID)
 qt<-quantile(healthy_ComBat$CNIH4,c(0.75)) #Q3 CNIH4 of healthy control
 
 PTB_TBM_ComBat <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,(Timepoint=='D0') & (trial_number %in% c('MDR_PTB','DS_PTB','26TB','27TB')))$LIMS_ID)
 PTB_TBM_ComBat %<>% mutate(CNIH4level=ifelse((CNIH4<qt[1]),1,2))
-#rownames(PTB_TBM_ComBat) <- PTB_TBM_ComBat$LIMS_ID
+
 vst_ptb_tbm <- merge(vst_ptb_tbm,PTB_TBM_ComBat %>% select('LIMS_ID','CNIH4level'),by="LIMS_ID")
 rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
 ```
@@ -91,8 +95,6 @@ rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
 ## 2. Helper functions
 
 ```{r}
-library(pheatmap)
-
 posterior_predict_hurdle_gaussian <- function(i, prep, ...) {
   mu <- brms::get_dpar(prep, "mu", i = i)
   sigma <- brms::get_dpar(prep, "sigma", i = i)
@@ -181,27 +183,43 @@ make_face_names <- function(mat, rc_fun, rc_names_b = NA,
   
   f_names
 }
+
+color.bar <- function(lut, min, max=-min, nticks=11, ticks=seq(min, max, len=nticks), title='') {
+  scale = (length(lut)-1)/(max-min)
+  plot(c(0,10), c(min,max), type='n', bty='n', xaxt='n', xlab='', yaxt='n', ylab='', main=title)
+  axis(2, ticks, las=1)
+  for (i in 1:(length(lut)-1)) {
+    print(lut[i])
+    y = (i-1)/scale + min
+    rect(0,y,10,y+1/scale, col=lut[i], border=NA)
+  }
+}
+
 ```
 
 ## \*Draft analysis - Playground (just for the experimental stuffs)
 
 ```{r}
-
-lnames = load(file = paste0(path_input,"Data/PTB-01-dataInput.RData"))
-lnames = load(file = paste0(path_input,"Data/PTB-02-networkConstruction-auto.RData"))
-load(file=paste0(path_input,"Data/Module_discovery.Rdata"))
+library(ggdendro)
+# Set up variables to contain the ME
 MEs = list();
 varExplained_firstPC <- list()
-set = 1
-
-temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
-temp_ME_order <- orderMEs(temp_ME)
-MEs[[set]] = list(data = temp_ME_order)
-temp_PC <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$varExplained)
-names(temp_PC)<-colnames(temp_ME)
-varExplained_firstPC[[set]] = list(data = temp_PC)
-  
+nSets <- 2
+# Calculate the ME for discovery and validation
+for (set in 1:nSets){
+  temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
+  temp_ME_order <- orderMEs(temp_ME)
+  MEs[[set]] = list(data = temp_ME_order)
+  temp_PC <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$varExplained)
+  names(temp_PC)<-colnames(temp_ME)
+  varExplained_firstPC[[set]] = list(data = temp_PC)
+}
+# re-order the names of module colors validation cohort as the same in the discovery cohorts
+MEs[[2]]$data = MEs[[2]]$data[,names(MEs[[1]]$data)]
+# Remove all "ME" from the names of MEs
 colnames(MEs[[1]]$data)<-gsub("ME","",colnames(MEs[[1]]$data))
+colnames(MEs[[2]]$data)<-gsub("ME","",colnames(MEs[[2]]$data))
+
 ME_dat<-MEs[[1]]$data
 cor_mat <- cor(ME_dat,use='pairwise.complete.obs',method = "spearman")
 dist_matrix <- as.dist(1-cor_mat)
@@ -212,39 +230,75 @@ cor_method="spearman"
 mat2 <- cor(ME_dat,use='pairwise.complete.obs', method = cor_method)
 p.mat2 <- cor.pval.test(ME_dat, ME_dat,method=cor_method, use='pairwise.complete.obs')
 
+
+# p1<-ggdendrogram(hc, rotate =T, theme_dendro = TRUE,size = 3)+
+#   ylab("")+xlab("") +
+#   theme_void()+ 
+#   theme(legend.position="bottom")+
+#   theme(panel.grid.minor = element_blank(),axis.title.x = element_blank(),
+#         axis.title.y = element_text(face="bold", colour="black", size=12),
+#         axis.text.y = element_text(face="bold",colour="black", size=13),
+#         axis.text.x = element_blank(),
+#         axis.ticks.x=element_blank(),
+#         legend.text = element_text(size = 15),
+#         legend.title = element_text( colour="black", size=12),
+#         legend.key = element_rect(colour = NA),
+#         strip.text=element_text(face = "bold",size=12)) + 
+#   theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))
+# col=c("#001164", 'white', "#FF681E")
+# 
+# p2 <-ggcorrplot(mat2,
+#                p.mat = p.mat2, 
+#                colors = col,
+#                hc.order = FALSE,
+#                type = 'full',
+#                outline.color = 'black',lab = T, lab_size = 3,insig="blank",
+#                show.diag = T) +
+#     scale_fill_gradient2(low=col[1], mid= col[2], high=col[3], na.value = 'gray50', limits=c(-1,1))+
+#     labs(fill="Corr")+
+#     theme(axis.text.x = element_blank(),axis.text.y = element_text(face="bold", colour="black", size=12),legend.text = element_text(size = 15),
+#         legend.title = element_text( colour="black", size=12))+theme(legend.position="right")
+
+module_discovery <- signif(moduleTraitCor[[1]][module_order,c("log2_CT")], 2) %>% as.data.frame()
+module_discovery<-module_discovery[match(rownames(mat2), rownames(module_discovery)),]
+
+p.discovery <- signif(moduleTraitPvalue[[1]][module_order,c("log2_CT")], 1) %>% as.data.frame()
+p.discovery<- p.discovery[match(rownames(mat2), rownames(p.discovery)),]
+
+module_validation <- signif(moduleTraitCor[[2]][module_order,c("log2_CT")], 2) %>% as.data.frame()
+module_validation<-module_validation[match(rownames(mat2), rownames(module_validation)),]
+
+p.validation <- signif(moduleTraitPvalue[[2]][module_order,c("log2_CT")], 1) %>% as.data.frame()
+p.validation<- p.validation[match(rownames(mat2), rownames(p.validation)),]
+
+module_all <- sort(c(module_discovery,module_validation))
+module_all
+
+```
+
+
+```{r}
+
 library(igraph)
 library(qgraph)
 # Keep only high correlations
 mat <- mat2
 mat[p.mat2>=0.05] <- 0
-# th <- 0.3
-# mat[mat<th&mat>-th] <- mat[mat<th&mat>-th]/5
-tmp1 <- signif(moduleTraitCor[[1]][module_order,c("log2_CT")], 2) %>% as.data.frame()
-tmp1<-tmp1[match(rownames(mat), rownames(tmp1)),]
-tmp2 <- signif(moduleTraitCor[[2]][module_order,c("log2_CT")], 2) %>% as.data.frame()
-tmp2<-tmp2[match(rownames(mat), rownames(tmp2)),]
-tmp12 <- sort(c(tmp1,tmp2))
+#mat[mat<0.5&mat>-0.5] <- mat[mat<0.5&mat>-0.5]/5
 
-
-p.tmp1 <- signif(moduleTraitPvalue[[1]][module_order,c("log2_CT")], 1) %>% as.data.frame()
-p.tmp1<- p.tmp1[match(rownames(mat), rownames(p.tmp1)),]
-p.tmp2 <- signif(moduleTraitPvalue[[2]][module_order,c("log2_CT")], 1) %>% as.data.frame()
-p.tmp2<- p.tmp2[match(rownames(mat), rownames(p.tmp2)),]
-
-sig1 <- symnum(p.tmp1, corr = FALSE, na = FALSE, cutpoints = c(0, 
+sig1 <- symnum(p.discovery, corr = FALSE, na = FALSE, cutpoints = c(0, 
     0.001, 0.01, 0.05, 0.1, 1), symbols = c("*** ", " **", " *", "  .", "     "))
-sig2 <- symnum(p.tmp2, corr = FALSE, na = FALSE, cutpoints = c(0, 
+sig2 <- symnum(p.validation, corr = FALSE, na = FALSE, cutpoints = c(0, 
     0.001, 0.01, 0.05, 0.1, 1), symbols = c("  ***", "** ", "* ", ".  ", "     "))
 sig <- data.frame(sig1 = sig1, sig2 = sig2) %>% within(newsig <- paste(sig1,sig2, sep=" "))
 sig<- sig$newsig
-colors <-blueWhiteRed(100,gamma = 0.4)[cut(tmp12, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
-#colors <-colorRampPalette(c("blue","white","red"))(100)[cut(tmp12, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
+colors <-blueWhiteRed(100,gamma = 0.4)[cut(module_all, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
 colors <- data.frame(color = colors,#natparks.pals("Arches",n=18),
-                      levels = sort(c(tmp1,tmp2)))
-colors1 <- filter(colors,levels%in%tmp1)
-colors2 <- filter(colors,levels%in%tmp2)
-colors1 <- colors1$color[match(tmp1, colors1$levels)] #order by module
-colors2 <- colors2$color[match(tmp2, colors2$levels)] #order by module
+                      levels = sort(c(module_discovery,module_validation)))
+colors1 <- filter(colors,levels%in%module_discovery)
+colors2 <- filter(colors,levels%in%module_validation)
+colors1 <- colors1$color[match(module_discovery, colors1$levels)] #order by module
+colors2 <- colors2$color[match(module_validation, colors2$levels)] #order by module
 colors = list()
 for(i in 1:18){
   colors[[i]] = c(colors1[i],colors2[i])
@@ -262,22 +316,8 @@ for(i in 1:18){
 #   colors[[i]] = c(colors1[i],colors2[i])
 # }
 
-color.bar <- function(lut, min, max=-min, nticks=11, ticks=seq(min, max, len=nticks), title='') {
-  scale = (length(lut)-1)/(max-min)
-  plot(c(0,10), c(min,max), type='n', bty='n', xaxt='n', xlab='', yaxt='n', ylab='', main=title)
-  axis(2, ticks, las=1)
-  #axis(1, ticks, las=1)
-  for (i in 1:(length(lut)-1)) {
-    print(lut[i])
-    y = (i-1)/scale + min
-    rect(0,y,10,y+1/scale, col=lut[i], border=NA)
-    #rect(y,0,y+1/scale,10, col=lut[i], border=NA)
-  }
-}
-
-color.bar(colorRampPalette(c("#4477AA","#BB4444"))(100), 0, 100)
-
 network <- graph_from_adjacency_matrix(mat, weighted=T, mode="undirected", diag=F)
+#E(network)$weight <- abs(E(network)$weight)
 tab <- table(moduleColors) %>% as.data.frame
 node.size <- tab[match(rownames(mat), tab$moduleColors),]$Freq
 node.colors <- c("cyan","#8A553A","#A38DC9","pink","turquoise","#FDFD96","#2E91E5","grey","grey60","tan","#ff5148","#44D044","lightcyan","black","midnightblue","#e5097f","#FFA07A","greenyellow")
@@ -291,7 +331,7 @@ l <- qgraph.layout.fruchtermanreingold(e,
                                        repulse.rad=(vcount(network)^3.1)
                                        )
 
-png(file=paste0(path_output,"/Figure_correlation_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
+#png(file=paste0(path_output,"/Figure_correlation_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
 
 #layout(matrix(c(1,2), nrow=1), widths=c(3,1))
 plot(network,
@@ -304,36 +344,21 @@ plot(network,
      # vertex.label.dist=ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 1),
      # vertex.label.degree = ifelse(rownames(mat)%in%c('blue','brown','turquoise'), 0, 92),
      edge.color = adjustcolor(c("#FF681E", "#001164")[(E(network)$weight<0)+1], 0.7),
-     edge.width=(E(network)$weight)*5,
-     edge.curved=0.001,
+     edge.width=abs((E(network)$weight))*5,
+     edge.curved=0.0001,
      )
 
-# sig<-c("    ⁂" ," ⁑  ⁂" ,"    *" ,". ." ,"     *" ,"   " ,"   " ,"    ." ,"*    " ,"   " ,"  .  ⁂" ,
-#        " *  ⁂",
-#        "   ",
-#        "    *",
-#        "*    ",
-#        "*    ",
-#        "   ",
-#        ".    ")
 plot(network,
      layout= l,
      vertex.label=sig,
      vertex.label.cex=node.label.size,
-     
-     
-     
-     
      vertex.size=log2(node.size)*3.5/1.7, 
      vertex.label.dist = 0.01,
-     #vertex.label.degree = 1,
      edge.color=NA,
      vertex.label.degree=0,
      vertex.label.color='yellow',
      add=T,
      vertex.shape="pie",
-     
-     
      vertex.pie=list(c(10,10)),
      vertex.pie.color=colors,
      vertex.label.degree=0.0,
@@ -343,6 +368,33 @@ plot(network,
 #color.bar(blueWhiteRed(100,gamma = 0.4) , -1.6, 1.6)
 dev.off()
 
+set.seed(2)
+plot(network,vertex.shape="pie",
+     vertex.label="",
+     vertex.pie=list(c(10,10)),
+     vertex.size=log2(node.size)*3.5,
+     vertex.pie.color=colors,
+     edge.color = adjustcolor(c("#FF681E", "#001164")[(E(network)$weight<0)+1], 0.7),
+     edge.width=abs((E(network)$weight))*5,)
+set.seed(2)
+plot(network, 
+     vertex.label=NA, 
+     vertex.size=log2(node.size)*3.5/1.1,
+     vertex.color=node.colors, 
+     edge.color=NA,
+     add=TRUE) 
+
+
+```
+
+network all gene and modules
+
+```{r}
+
+network <- graph_from_adjacency_matrix(TOM1, weighted=T, mode="undirected", diag=F)
+network <- simplify(network)
+
+plot(network,vertex.label = '')
 ```
 
 network brown module
@@ -353,11 +405,8 @@ network brown module
 
 ```{r}
 library(ggraph)
-#load(file=paste0(path_input,"Raw_data/PTB_TOM_10000-block.1.RData"))
-hubgenes_CT <- read.csv(paste0(path_input,"Data/Modules-Hubgenes_CT_value.csv"))$gene
-#TOM1 <- as.matrix(TOM)
-colnames(TOM1) <- colnames(multiExpr[[1]]$data)
-rownames(TOM1) <- colnames(multiExpr[[1]]$data)
+
+hubgenes_CT <- ModuleHubgeneCT$gene
 adj <- TOM1
 #adj <- adj[brown_genes,brown_genes]
 brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>% filter(module=='brown')
@@ -395,121 +444,19 @@ ggraph(network,
 dev.off()
 ```
 
-```{r}http://127.0.0.1:42081/graphics/plot_zoom_png?width=524&height=757}
-library(graphlayouts)
-hubgenes_CT <- read.csv(paste0(path_input,"Data/Modules-Hubgenes_CT_value.csv"))$gene
-brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>% filter(module=='brown')
-brown_genes <- brown_module$genes
-adj <- TOM1
-adj <- adj[brown_genes,brown_genes]
-diag(adj) <- NA
-adj[adj < quantile(adj, probs = 0.3, na.rm = T)] = 0
-network <- graph_from_adjacency_matrix(adj, weighted=T, mode="undirected", diag=F)
+```{r} 
+library(graphlayouts) hubgenes_CT \<- read.csv(paste0(path_input,"Data/Modules-Hubgenes_CT_value.csv"))$gene brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %\>% filter(module=='brown') brown_genes \<- brown_module\$genes adj \<- TOM1 adj \<- adj[brown_genes,brown_genes] diag(adj) \<- NA adj[adj \< quantile(adj, probs = 0.3, na.rm = T)] = 0 network \<- graph_from_adjacency_matrix(adj, weighted=T, mode="undirected", diag=F)
 
-e <- get.edgelist(network,names=FALSE)
-l <- qgraph.layout.fruchtermanreingold(e,
-                                       vcount=vcount(network),
-                                       area=12*(vcount(network)^2),
-                                       repulse.rad=(vcount(network)^3.1)
-                                       )
+e \<- get.edgelist(network,names=FALSE) l \<- qgraph.layout.fruchtermanreingold(e, vcount=vcount(network), area=12\*(vcount(network)\^2), repulse.rad=(vcount(network)\^3.1) )
 
-l <- qgraph.layout.fruchtermanreingold(e,
-                                       vcount=vcount(network),
-                                       area=120*(vcount(network)^2),
-                                       repulse.rad=(vcount(network)^8))
-l <- qgraph.layout.fruchtermanreingold(e,vcount=vcount(network))
-png(file=paste0(path_output,"/Figure_brown_tmp.png"),res=900, units = 'in', width=6.5, height = 6.5)
+l \<- qgraph.layout.fruchtermanreingold(e, vcount=vcount(network), area=120\*(vcount(network)\^2), repulse.rad=(vcount(network)\^8)) l \<- qgraph.layout.fruchtermanreingold(e,vcount=vcount(network)) png(file=paste0(path_output,"/Figure_brown_tmp.png"),res=900, units = 'in', width=6.5, height = 6.5)
 
-plot(network,
-     layout= l,#l,
-     vertex.label='',
-     vertex.size = ifelse(V(network)$name%in%hubgenes_CT,  25,2),
-     vertex.color = ifelse(V(network)$name%in%hubgenes_CT,'purple','darkgreen'),
-     edge.width=(E(network)$weight))
-dev.off()
+plot(network, layout= l,#l, vertex.label='', vertex.size = ifelse(V(network)$name%in%hubgenes_CT, 25,2),  vertex.color = ifelse(V(network)$name%in%hubgenes_CT,'purple','darkgreen'), edge.width=(E(network)\$weight)) dev.off()
+
 ```
 
 ```{r}
-library(igraph)
-library(qgraph)
-load(file=paste0(path_input,"Raw_data/PTB_TOM_10000-block.1.RData"))
-TOM1 <- as.matrix(TOM)
-brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>% filter(module=='brown')
-brown_genes <- brown_module$genes
 
-colnames(TOM1) <- colnames(multiExpr[[1]]$data)
-rownames(TOM1) <- colnames(multiExpr[[1]]$data)
-brown_TOM <- TOM1[brown_genes[1:5],brown_genes[1:5]]
-
-# network <- graph_from_adjacency_matrix(brown_TOM, weighted=T, mode="undirected", diag=F)
-# e <- get.edgelist(network,names=FALSE)
-# l <- qgraph.layout.fruchtermanreingold(e,
-#                                        vcount=vcount(network),
-#                                        area=8*(vcount(network)^2),
-#                                        repulse.rad=(vcount(network)^3.1)
-#                                        )
-
-
-adj <- TOM1
-adj <- adj[brown_genes,brown_genes]
-adj <- adj[c(brown_100[brown_100%nin%hubgenes_CT],
-                    hubgenes_CT[rev(1:length(hubgenes_CT))]),
-           
-           c(brown_100[brown_100%nin%hubgenes_CT],
-                    hubgenes_CT[rev(1:length(hubgenes_CT))])]
-diag(adj) <- NA
-#max(adj, na.rm = T)
-adj[adj < quantile(adj, probs = 0.3, na.rm = T)] = 0
-
-
-#adj[adj != 1] = 0
-color <- "brown" 
-nodesize <- 50
-Hubsize=75
-node_cutoff = 50
-network <- graph.adjacency(adj, mode ="undirected", weighted=T)
-coexp_genes <- c("CNIH4","ZAP70")
-if(!is.null(coexp_genes)) {
-  label_name <- V(network)$name
-  label_name[which(label_name %nin% coexp_genes)] <- ""
-  nodesize <- rep(nodesize,length(label_name))
-  nodesize[which(label_name %in% coexp_genes)] <- Hubsize
-  network <- set.vertex.attribute(network, "label_name", value=label_name)
-  network <- set.vertex.attribute(network, "nodesize", value=nodesize)
-}
-# V(network)$name
-## adding atribute of gradient color
-# network <- set.vertex.attribute(network, "gradient_color", value=gradient_color)
-# network <- set.vertex.attribute(network, "gradient_color", value=gradient_color)
-# V(network)$gradient_color
-network <- simplify(network)  # removes self-loops
-V(network)$color <- ifelse(rownames(adj) %in% c('CNIH4','ZAP70'),'purple','darkgreen')#color
-if (!is.null(node_cutoff)) {
-  node_cutoff <- min(node_cutoff,length(degree(network)))
-  degree_cutoff <- sort(as.vector(degree(network)),decreasing = T)[node_cutoff] 
-  deg_filter <- degree(network) < degree_cutoff
-  network <- igraph::delete.vertices(network, deg_filter)
-}
-E(network)$width <- E(network)$weight
-par(mar=c(1,1,1,1))
-s <- abs(log(abs(geneModuleMembership[brown_genes,'MMbrown'])))+10
-png(file=paste0(path_output,"/Figure_brown_network.png"),res=900, units = 'in', width=6.5, height = 6.5)
-plot(network,
-     #vertex.size =19,
-     #vertex.label.color =  'white',
-     vertex.label = '',
-     
-     #vertex.size=ifelse(V(network)$name%in%hubgenes_CT,  25,5),
-     #vertex.color = ifelse(V(network)$name %in%hubgenes_CT,'purple','darkgreen')
-     )
-dev.off()
-```
-
-```{r}
-load(file=paste0(path_input,"Raw_data/PTB_TOM_10000-block.1.RData"))
-TOM1 <- as.matrix(TOM)
-colnames(TOM1) <- colnames(multiExpr[[1]]$data)
-rownames(TOM1) <- colnames(multiExpr[[1]]$data)
 brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>% filter(module=='brown')
 brown_genes <- brown_module$genes
 
@@ -559,7 +506,6 @@ plot(network,
      edge.width = E(network)$weight*2,
      vertex.color = ifelse(V(network)$name%in%hubgenes_CT,'brown','darkgreen'),
      vertex.size = ifelse(V(network)$name%in%hubgenes_CT, 25,10)
-      
      )
 dev.off()
 ```
