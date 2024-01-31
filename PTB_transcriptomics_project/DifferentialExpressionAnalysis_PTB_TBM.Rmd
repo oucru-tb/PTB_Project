@@ -276,7 +276,6 @@ module_all
 
 ```
 
-
 ```{r}
 
 library(igraph)
@@ -284,7 +283,7 @@ library(qgraph)
 # Keep only high correlations
 mat <- mat2
 mat[p.mat2>=0.05] <- 0
-#mat[mat<0.5&mat>-0.5] <- mat[mat<0.5&mat>-0.5]/5
+mat[mat<0.5&mat>-0.5] <- mat[mat<0.5&mat>-0.5]/10
 
 sig1 <- symnum(p.discovery, corr = FALSE, na = FALSE, cutpoints = c(0, 
     0.001, 0.01, 0.05, 0.1, 1), symbols = c("*** ", " **", " *", "  .", "     "))
@@ -292,6 +291,9 @@ sig2 <- symnum(p.validation, corr = FALSE, na = FALSE, cutpoints = c(0,
     0.001, 0.01, 0.05, 0.1, 1), symbols = c("  ***", "** ", "* ", ".  ", "     "))
 sig <- data.frame(sig1 = sig1, sig2 = sig2) %>% within(newsig <- paste(sig1,sig2, sep=" "))
 sig<- sig$newsig
+
+#colors <- colorRampPalette(c("#0091ff", "#f0650e"))(100)[cut(module_all, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
+
 colors <-blueWhiteRed(100,gamma = 0.4)[cut(module_all, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
 colors <- data.frame(color = colors,#natparks.pals("Arches",n=18),
                       levels = sort(c(module_discovery,module_validation)))
@@ -366,25 +368,70 @@ plot(network,
      )
 
 #color.bar(blueWhiteRed(100,gamma = 0.4) , -1.6, 1.6)
+#dev.off()
+#
+png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=6.5, height = 6.5)
+
+
+
+network <- graph_from_adjacency_matrix(mat, weighted=T, mode="directed", diag=F)
+e <- get.edgelist(network,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,
+                                       vcount=vcount(network),
+                                       )
+
+plot(network,vertex.shape="pie",
+     layout=l,
+     vertex.label="",edge.arrow.mode=0,
+     vertex.pie=list(c(10,10)),
+     #vertex.size=log2(node.size)*3.5,
+     vertex.pie.color=colors,
+     #edge.color = adjustcolor(c("#FF681E", "#001164")[(E(network)$weight<0)+1], 0.7),
+     #edge.width=abs((E(network)$weight))*5,
+     )
+
+
+
+set.seed(2)
+plot(network,
+     vertex.label=NA,
+     vertex.size=log2(node.size)*3.5/1.7,
+     vertex.color=node.colors,
+     edge.color=NA,
+     add=TRUE)
+dev.off()
+```
+
+```{r}
+library(igraph)
+
+mat <- mat2
+mat[p.mat2>=0.05] <- 0
+mat[mat<0.5&mat>-0.5] <- mat[mat<0.5&mat>-0.5]/1.5
+network <- graph_from_adjacency_matrix(mat, weighted=T, mode="undirected", diag=F)
+edge.color <- factor(c("#FF681E", "#001164")[(E(network)$weight<0)+1])
+
+png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=10, height = 7)
+ggraph(network) +
+  geom_edge_density(aes(fill = edge.color),n=20) +
+  geom_edge_link0(alpha = abs((E(network)$weight)*2),
+                  aes(edge_colour = E(network)$weight))+
+  scale_edge_color_gradient2(name = "Link Strength",
+  low = "#001164",mid='white',high = "#FF681E",midpoint = 0,limit = c(-1,1)) +
+  geom_node_point(fill =node.colors, colour = 'black' ,size=10,stroke=1,shape = 21)+
+  theme(legend.position = "none")
 dev.off()
 
-set.seed(2)
-plot(network,vertex.shape="pie",
-     vertex.label="",
-     vertex.pie=list(c(10,10)),
-     vertex.size=log2(node.size)*3.5,
-     vertex.pie.color=colors,
-     edge.color = adjustcolor(c("#FF681E", "#001164")[(E(network)$weight<0)+1], 0.7),
-     edge.width=abs((E(network)$weight))*5,)
-set.seed(2)
-plot(network, 
-     vertex.label=NA, 
-     vertex.size=log2(node.size)*3.5/1.1,
-     vertex.color=node.colors, 
-     edge.color=NA,
-     add=TRUE) 
 
 
++
+  geom_edge_density(aes(fill = edge.color),col = )+
+  scale_edge_colour_gradient(low = "#001164",
+                             high = "#FF681E")+
+  scale_color_manual(values = node.colors, breaks = node.colors) +
+  scale_fill_manual(values = node.colors, breaks = node.colors) + theme_void()
+  
+  
 ```
 
 network all gene and modules
@@ -427,7 +474,7 @@ network <- graph_from_adjacency_matrix(adj, weighted=T, mode="undirected", diag=
 network <- simplify(network)
 
 
-png(file=paste0(path_output,"/Figure_brown.png"),res=900, units = 'in', width=11, height = 11)
+#png(file=paste0(path_output,"/Figure_brown.png"),res=900, units = 'in', width=11, height = 11)
 ggraph(network, 
        layout = 'kk'
        ) +
@@ -441,22 +488,10 @@ ggraph(network,
     geom_node_text(label = ifelse(V(network)$name%in%hubgenes_CT,V(network)$name,''), 
                    family = "serif",color='white') + 
     theme_graph()
-dev.off()
-```
-
-```{r} 
-library(graphlayouts) hubgenes_CT \<- read.csv(paste0(path_input,"Data/Modules-Hubgenes_CT_value.csv"))$gene brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %\>% filter(module=='brown') brown_genes \<- brown_module\$genes adj \<- TOM1 adj \<- adj[brown_genes,brown_genes] diag(adj) \<- NA adj[adj \< quantile(adj, probs = 0.3, na.rm = T)] = 0 network \<- graph_from_adjacency_matrix(adj, weighted=T, mode="undirected", diag=F)
-
-e \<- get.edgelist(network,names=FALSE) l \<- qgraph.layout.fruchtermanreingold(e, vcount=vcount(network), area=12\*(vcount(network)\^2), repulse.rad=(vcount(network)\^3.1) )
-
-l \<- qgraph.layout.fruchtermanreingold(e, vcount=vcount(network), area=120\*(vcount(network)\^2), repulse.rad=(vcount(network)\^8)) l \<- qgraph.layout.fruchtermanreingold(e,vcount=vcount(network)) png(file=paste0(path_output,"/Figure_brown_tmp.png"),res=900, units = 'in', width=6.5, height = 6.5)
-
-plot(network, layout= l,#l, vertex.label='', vertex.size = ifelse(V(network)$name%in%hubgenes_CT, 25,2),  vertex.color = ifelse(V(network)$name%in%hubgenes_CT,'purple','darkgreen'), edge.width=(E(network)\$weight)) dev.off()
-
+#dev.off()
 ```
 
 ```{r}
-
 brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>% filter(module=='brown')
 brown_genes <- brown_module$genes
 
@@ -499,7 +534,7 @@ if (!is.null(node_cutoff)) {
   network <- igraph::delete.vertices(network, deg_filter)
 }
 E(network)$width <- E(network)$weight
-png(file=paste0(path_output,"/Figure_brown_network.png"),res=900, units = 'in', width=10, height = 10)
+#png(file=paste0(path_output,"/Figure_brown_network.png"),res=900, units = 'in', width=10, height = 10)
 plot(network,
      vertex.label = ifelse(V(network)$name%in%hubgenes_CT,V(network)$name,''),
      vertex.label.color = 'white',
@@ -507,8 +542,10 @@ plot(network,
      vertex.color = ifelse(V(network)$name%in%hubgenes_CT,'brown','darkgreen'),
      vertex.size = ifelse(V(network)$name%in%hubgenes_CT, 25,10)
      )
-dev.off()
+#dev.off()
 ```
+
+Draw with Cytoscape
 
 ```{r}
 library(RCy3)
@@ -562,28 +599,38 @@ function(TOM,gene_list, node_cutoff = NULL , gradient_color=NULL,
 # TOM = TOMsimilarity(adjacency)
 brown_module <- data.frame(genes=colnames(multiExpr[[1]]$data),module = moduleColors) %>%filter(module=='brown')
 brown_genes <- brown_module$genes
-TOM <- as.matrix(TOM)
-colnames(TOM) <- colnames(multiExpr[[1]]$data)
-rownames(TOM) <- colnames(multiExpr[[1]]$data)
 
 hub_coexp_genes <- c("CNIH4", "ZAP70")
 
-draw_wgcna_top_genes_module_network(TOM = TOM, gene_list = brown_genes,node_cutoff = 50,
+draw_wgcna_top_genes_module_network(TOM = TOM1, gene_list = brown_genes,node_cutoff = 50,
                     module_color = "brown", 
                     #gradient_color=gene_list_HR$Log_HR,
                     coexp_genes = hub_coexp_genes,
-                    title = paste0(module," network"),
+                    title = paste0("brown network"),
                     collection = "for Mortality in HIVneg")
-TOM
+
 ```
 
 ```{r}
-adjacency = adjacency(rbind(multiExpr[[1]]$data,multiExpr[[2]]$data),
-                      power = 8,type ="unsigned")
-TOM = TOMsimilarity(adjacency)
- 
-colnames(TOM) <- colnames(adjacency)
-rownames(TOM) <- rownames(adjacency)
+library(RCy3)
+adj <- TOM1
+adj <- adj[brown_genes,brown_genes]
+diag(adj) <- NA
+adj[adj < quantile(adj, probs = 0.3, na.rm = T)] = 0
+
+network <- graph_from_adjacency_matrix(adj, weighted=T, mode="undirected", diag=F)
+network <- simplify(network)
+
+network <- delete.edges(
+    network ,
+    E(network )[E(network )$weight > 0 & E(network )$weight < 0.2]
+)
+
+
+
+cytoscapePing() ## open Cytoscape by cmd Cytoscape &
+createNetworkFromIgraph(network, title = 'brown',
+                        collection = paste0("Igraph Collection "))
 ```
 
 scatter plot CNIH4 vs ZAP70, PLCG1, CTLA4
