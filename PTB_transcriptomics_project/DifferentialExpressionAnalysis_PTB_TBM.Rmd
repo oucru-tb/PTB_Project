@@ -200,6 +200,42 @@ color.bar <- function(lut, min, max=-min, nticks=11, ticks=seq(min, max, len=nti
 ## \*Draft analysis - Playground (just for the experimental stuffs)
 
 ```{r}
+#load(file="Data/Module_discovery.Rdata")
+## Module-trait association analysis
+sizeGrWindow(10,6)
+textMatrix<-list()
+xLabels = c("Gene-Xpert \n Ct value", "Cavity","Lung proportion\n damage")
+
+# png(file=paste0(path_output_2,"/Figure 1A-ModuleTraitRelationships-PTB.png"),
+#     wi = 8, he = 8,units = 'in', res = 550)
+par(mfrow = c(1,2),mar = c(5,6,2.5,1))
+nSets = 2
+set = 1
+# datTraits<-traitData[[set]]$data %>% dplyr::select(c("log2_CT", "Cavity", "Lung_proportion"))
+# Will display correlations and their p-values
+textMatrix[[set]] =  paste(signif(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 2), "\n(",
+                    signif(moduleTraitPvalue[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 1), ")", sep = "");
+dim(textMatrix[[set]]) = dim(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")])
+# png(file=paste0(path_output_2,"/Figure 1A-ModuleTraitRelationships-PTB_",shortLabels[set],".png"),
+#     units="px", width=1800, height=1800, res=300)
+# par(mar = c(6, 8.5, 3, 3));
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor.scaled[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")],
+               xLabels = xLabels,
+               yLabels = module_order,
+               ySymbols = module_order,
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix[[set]],
+               setStdMargins = FALSE,
+               cex.text = 0.7,
+               zlim = c(-3,3),
+               main = paste0(shortLabels[set]," cohort"))
+
+
+```
+
+```{r}
 library(ggdendro)
 # Set up variables to contain the ME
 MEs = list();
@@ -271,7 +307,7 @@ module_validation<-module_validation[match(rownames(mat2), rownames(module_valid
 p.validation <- signif(moduleTraitPvalue[[2]][module_order,c("log2_CT")], 1) %>% as.data.frame()
 p.validation<- p.validation[match(rownames(mat2), rownames(p.validation)),]
 
-module_all <- sort(c(module_discovery,module_validation))
+module_all <- c(module_discovery,module_validation)
 module_all
 
 ```
@@ -295,8 +331,21 @@ sig<- sig$newsig
 #colors <- colorRampPalette(c("#0091ff", "#f0650e"))(100)[cut(module_all, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
 
 colors <-blueWhiteRed(100,gamma = 0.4)[cut(module_all, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
-colors <- data.frame(color = colors,#natparks.pals("Arches",n=18),
-                      levels = sort(c(module_discovery,module_validation)))
+
+colors_discovery <- data.frame(module = colnames(ME_dat),
+                               color = colors[1:18],
+                               levels = module_discovery)
+
+colors_validation <- data.frame(module = colnames(ME_dat),
+                               color = colors[19:36],
+                               levels = module_validation)
+
+
+
+
+colors <- data.frame(module = colnames(ME_dat),
+                     color = colors,#natparks.pals("Arches",n=18),
+                     levels = c(module_discovery,module_validation))
 colors1 <- filter(colors,levels%in%module_discovery)
 colors2 <- filter(colors,levels%in%module_validation)
 colors1 <- colors1$color[match(module_discovery, colors1$levels)] #order by module
@@ -305,7 +354,7 @@ colors = list()
 for(i in 1:18){
   colors[[i]] = c(colors1[i],colors2[i])
 }
-
+colors1
 # colors <- data.frame(color = colorRampPalette(c("#4477AA","#BB4444"))(36),#natparks.pals("Arches",n=18),
 #                       levels = sort(c(tmp1,tmp2)))
 # 
@@ -370,7 +419,7 @@ plot(network,
 #color.bar(blueWhiteRed(100,gamma = 0.4) , -1.6, 1.6)
 #dev.off()
 #
-png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=6.5, height = 6.5)
+png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=7.5, height = 7.5)
 
 
 
@@ -404,34 +453,82 @@ dev.off()
 
 ```{r}
 library(igraph)
+library(ggraph)
+library(tidygraph)
+library(qgraph)
+library(scatterpie)
 
 mat <- mat2
 mat[p.mat2>=0.05] <- 0
-mat[mat<0.5&mat>-0.5] <- mat[mat<0.5&mat>-0.5]/1.5
+mat[mat<0.5&mat>-0.5] <- mat[mat<0.5&mat>-0.5]/3
 network <- graph_from_adjacency_matrix(mat, weighted=T, mode="undirected", diag=F)
 edge.color <- factor(c("#FF681E", "#001164")[(E(network)$weight<0)+1])
+tab <- table(moduleColors) %>% as.data.frame
+node.size <- tab[match(rownames(mat), tab$moduleColors),]$Freq
 
-png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=10, height = 7)
-ggraph(network) +
-  geom_edge_density(aes(fill = edge.color),n=20) +
+e <- get.edgelist(network,names=FALSE)
+l <- qgraph.layout.fruchtermanreingold(e,weights = E(network)$weight,
+                                       vcount=vcount(network),
+                                       #area=8*(vcount(network)^2),
+                                       #repulse.rad=(vcount(network)^3)
+                                       )
+
+png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=12, height = 8)
+
+V(network)$D <- 1:18
+V(network)$V <- 1:18
+V(network)$x <- l[, 1]
+V(network)$y <- l[, 2]
+V(network)$color1 <- colors1
+V(network)$color2 <- colors2
+V(network)$radius <- log10(node.size)/5
+
+df <- as_data_frame(network, "vertices")
+df2 <- df
+for(i in 1:18){
+  tmp <- df[i,]
+  df1 <- tmp[rep(seq_len(nrow(tmp)), each = node.size[i]-1), ]
+  df2 <- rbind(df2,df1)
+}
+df2 <- df2 %>% mutate(distance_to_center = runif(nrow(df2), 0, 1)*radius*2.2,
+                      direction = runif(nrow(df2), 0, 1)*2*pi,
+                      x = x + distance_to_center*cos(direction),
+                      y = y + distance_to_center*sin(direction))
+
+colors1 <- colors_discovery[order(df$x),]$color
+colors2 <- colors_validation[order(df$x),]$color
+fill_color <- to_vec(for(i in 1:18) c(rep(colors2[i],181),rep(colors1[i],181)))
+
+ggraph(network,layout=l) +
+  geom_edge_density(aes(fill = edge.color)) + 
+  scale_edge_fill_identity() +
   geom_edge_link0(alpha = abs((E(network)$weight)*2),
                   aes(edge_colour = E(network)$weight))+
-  scale_edge_color_gradient2(name = "Link Strength",
-  low = "#001164",mid='white',high = "#FF681E",midpoint = 0,limit = c(-1,1)) +
-  geom_node_point(fill =node.colors, colour = 'black' ,size=10,stroke=1,shape = 21)+
+  scale_edge_color_gradient2(name = "Link Strength", 
+                             low = "#001164",
+                             mid='white', 
+                             high = "#FF681E", 
+                             midpoint = 0, 
+                             limit = c(-1,1)) +
+  geom_point(data = df2,aes(x = x, y = y), size = 0.5,alpha=0.3,
+             col = df2$name) +
+  
+  geom_node_point(fill =node.colors,
+                  colour = 'black',
+                  size=log10(node.size)*9,
+                  shape = 21,alpha=0.4) +
+  geom_scatterpie(aes(x=x, y=y,r = radius),
+                  data = df,
+                  cols=c('D','V'),
+                  fill=fill_color,
+                  pie_scale = 1,
+                  )+
+  coord_fixed()+
+  theme_void()+
   theme(legend.position = "none")
+
+
 dev.off()
-
-
-
-+
-  geom_edge_density(aes(fill = edge.color),col = )+
-  scale_edge_colour_gradient(low = "#001164",
-                             high = "#FF681E")+
-  scale_color_manual(values = node.colors, breaks = node.colors) +
-  scale_fill_manual(values = node.colors, breaks = node.colors) + theme_void()
-  
-  
 ```
 
 network all gene and modules
