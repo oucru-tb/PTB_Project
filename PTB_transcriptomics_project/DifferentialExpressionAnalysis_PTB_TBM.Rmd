@@ -319,7 +319,7 @@ library(qgraph)
 # Keep only high correlations
 mat <- mat2
 mat[p.mat2>=0.05] <- 0
-mat[mat<0.5&mat>-0.5] <- mat[mat<0.5&mat>-0.5]/10
+mat[mat<0.5&mat>-0.5] <- mat[mat<0.5&mat>-0.5]/15
 
 sig1 <- symnum(p.discovery, corr = FALSE, na = FALSE, cutpoints = c(0, 
     0.001, 0.01, 0.05, 0.1, 1), symbols = c("*** ", " **", " *", "  .", "     "))
@@ -457,40 +457,62 @@ library(ggraph)
 library(tidygraph)
 library(qgraph)
 library(scatterpie)
+library(comprehenr)
 
 mat <- mat2
 mat[p.mat2>=0.05] <- 0
-mat[mat<0.5&mat>-0.5] <- mat[mat<0.5&mat>-0.5]/3
+mat[mat<0.5&mat>-0.5] <- mat[mat<0.5&mat>-0.5]/5
 network <- graph_from_adjacency_matrix(mat, weighted=T, mode="undirected", diag=F)
 edge.color <- factor(c("#FF681E", "#001164")[(E(network)$weight<0)+1])
 tab <- table(moduleColors) %>% as.data.frame
 node.size <- tab[match(rownames(mat), tab$moduleColors),]$Freq
+node.colors <- c("#00fff5","#8A553A","#A38DC9","pink","#07beb8","#FDFD96","#2E91E5","grey","grey60","tan","#ff5148","#44D044","#9eebe8","black","midnightblue","#e5097f","#FFA07A","greenyellow")
+
+colors <-blueWhiteRed(100,gamma = 0.4)[cut(module_all, breaks = seq(-1.6, 1.6, len = 100),include.lowest = TRUE)]
+
+colors_discovery <- data.frame(module = colnames(ME_dat),
+                               color = colors[1:18],
+                               levels = module_discovery)
+
+colors_validation <- data.frame(module = colnames(ME_dat),
+                               color = colors[19:36],
+                               levels = module_validation)
 
 e <- get.edgelist(network,names=FALSE)
 l <- qgraph.layout.fruchtermanreingold(e,weights = E(network)$weight,
                                        vcount=vcount(network),
-                                       #area=8*(vcount(network)^2),
-                                       #repulse.rad=(vcount(network)^3)
+                                       area=1.9*(vcount(network)^2),
+                                       #repulse.rad=(vcount(network)^2)
                                        )
 
-png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=12, height = 8)
+sig1 <- symnum(p.discovery, corr = FALSE, na = FALSE, cutpoints = c(0, 
+    0.001, 0.01, 0.05, 0.1, 1), symbols = c("***", "**", "*", "•", " "))
+sig2 <- symnum(p.validation, corr = FALSE, na = FALSE, cutpoints = c(0, 
+    0.001, 0.01, 0.05, 0.1, 1), symbols = c("***", "**", "*", "•", " "))
+
+
+sig <- data.frame(sig1 = sig1, sig2 = sig2) %>% within(newsig <- paste(sig1,sig2, sep="    "))
+sig<- sig$newsig
 
 V(network)$D <- 1:18
 V(network)$V <- 1:18
 V(network)$x <- l[, 1]
 V(network)$y <- l[, 2]
-V(network)$color1 <- colors1
-V(network)$color2 <- colors2
-V(network)$radius <- log10(node.size)/5
+V(network)$radius <- log10(node.size)/3
+V(network)$sig1 <- sig1
+V(network)$sig2 <- sig2
+#V(network)$sig <- sig
+
 
 df <- as_data_frame(network, "vertices")
+df$colors <- node.colors
 df2 <- df
 for(i in 1:18){
   tmp <- df[i,]
   df1 <- tmp[rep(seq_len(nrow(tmp)), each = node.size[i]-1), ]
   df2 <- rbind(df2,df1)
 }
-df2 <- df2 %>% mutate(distance_to_center = runif(nrow(df2), 0, 1)*radius*2.2,
+df2 <- df2 %>% mutate(distance_to_center = runif(nrow(df2), 0, 1)*radius*3,
                       direction = runif(nrow(df2), 0, 1)*2*pi,
                       x = x + distance_to_center*cos(direction),
                       y = y + distance_to_center*sin(direction))
@@ -499,36 +521,57 @@ colors1 <- colors_discovery[order(df$x),]$color
 colors2 <- colors_validation[order(df$x),]$color
 fill_color <- to_vec(for(i in 1:18) c(rep(colors2[i],181),rep(colors1[i],181)))
 
-ggraph(network,layout=l) +
+png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=12, height = 8)
+
+p <- ggraph(network,layout=l) +
   geom_edge_density(aes(fill = edge.color)) + 
   scale_edge_fill_identity() +
-  geom_edge_link0(alpha = abs((E(network)$weight)*2),
-                  aes(edge_colour = E(network)$weight))+
+  geom_edge_link0(alpha = abs((E(network)$weight)*3),
+                  aes(edge_colour = E(network)$weight, 
+                      #edge_width=2,
+                      )
+                  )+
   scale_edge_color_gradient2(name = "Link Strength", 
                              low = "#001164",
                              mid='white', 
                              high = "#FF681E", 
                              midpoint = 0, 
                              limit = c(-1,1)) +
-  geom_point(data = df2,aes(x = x, y = y), size = 0.5,alpha=0.3,
-             col = df2$name) +
-  
+
+  scale_edge_width(range = c(1, 5))+
   geom_node_point(fill =node.colors,
                   colour = 'black',
                   size=log10(node.size)*9,
-                  shape = 21,alpha=0.4) +
+                  shape = 21,alpha=0.1,stroke=NA) +
+  geom_point(data = df2,aes(x = x, y = y), size = 0.25,alpha=0.9,
+             col = df2$colors) +
+  
   geom_scatterpie(aes(x=x, y=y,r = radius),
                   data = df,
                   cols=c('D','V'),
                   fill=fill_color,
                   pie_scale = 1,
                   )+
+  geom_node_text(aes(label = sig1,x = x+radius*0.4, y = y),  colour = 'yellow', size=(log10(node.size)/5)*7,
+                  show.legend = FALSE, family = "serif",angle = 90) +
+  
+    geom_node_text(aes(label = sig2,x = x-radius*0.4, y = y),  colour = 'yellow', size=(log10(node.size)/5)*7,
+                  show.legend = FALSE, family = "serif",angle = 90) +
   coord_fixed()+
   theme_void()+
-  theme(legend.position = "none")
-
-
+  theme(legend.position = "none") 
+p
 dev.off()
+
+# library(grid)
+# 
+# png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=8, height = 12)
+# grid.newpage()
+# vp <- viewport(name = "rotate", angle = -90, width =8, height = 12)
+# pushViewport(vp)
+# print(p, vp = "rotate", newpage = FALSE)
+# dev.off()
+
 ```
 
 network all gene and modules
@@ -861,7 +904,100 @@ tbl_regression(model3,intercept = TRUE,estimate_fun = purrr::partial(style_ratio
 
 ## 3. Main Analysis
 
+### Heatmap
+
+```{r}
+
+library(lattice)
+
+df <- vst_data %>% select(c('CNIH4','CD274','CD58','GeneXpert_Base','CT_mean', 'IFNG'))
+
+x_tilde <- expand.grid(CD274=seq(min(df$CD274,na.rm=T), max(df$CD274,na.rm=T), length.out=100), 
+                       CD58=seq(min(df$CD58,na.rm=T), max(df$CD58,na.rm=T), length.out=100))
+
+model1 <- lm(CT_mean ~ CD274*CD58, data=df, 
+             #family="binomial"
+             )
+
+model1 <- lm(CD274  ~ CD58 + CNIH4, data=df, 
+             #family="binomial"
+             )
+
+summary(model1)
+x_tilde$CT_value <- predict(model1, x_tilde, type="response")
+
+ggplot(data=x_tilde, mapping = aes(x=CD274,y= CD58 )) + 
+  geom_raster(data = x_tilde, mapping = aes(fill=CT_value)) + 
+  scale_fill_distiller(palette = "RdYlBu",direction=1) +
+  geom_point(data=df, aes(x=CD274,y= CD58,
+                          color=GeneXpert_Base,size=CNIH4
+                          ),alpha=0.5)+
+  scale_color_manual(values = c("ND" = "grey",
+                                "Low" = "#4575b4",
+                                'Medium'='#ffffbf',
+                                'High'='#d73027'))+
+  theme_bw()
+
+vst_data$CNIH4
+```
+
 ### Correlation Analysis
+
+### Scatter plot
+
+```{r}
+df <- vst_data %>% select(c('IL1B','IL6','IL8'))
+p<-list()
+
+for(i in 1:27){
+p1<-ggplot(data=df, aes_string(x='CNIH4',y=as.name(colnames(df)[i])))+
+  geom_point(alpha=0.2,col='red')+
+  theme_bw()+
+  stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7,method = 'spearman')+
+  theme_bw()+ 
+  ylab(paste0(as.name(colnames(df)[i])," expression"))+
+  xlab("CNIH4 expression")+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+  p[[i]]<-ggdraw(p1)
+  ggdraw(p1)
+}
+```
+
+```{r}
+library(ggpmisc)
+library(ggpubr)
+df <- vst_data %>% select(c('CNIH4','IFNG'))
+ggplot(data=df, aes(x=CNIH4,y=IFNG))+
+  geom_point(alpha=0.2,col='red')+
+  theme_bw()+
+  stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7,method = 'spearman')+
+  theme_bw()+
+  ylab(paste0(as.name('IFNG')," expression"))+
+  xlab("CNIH4 expression")+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+```
 
 #### CNIH4 vs lum la
 
