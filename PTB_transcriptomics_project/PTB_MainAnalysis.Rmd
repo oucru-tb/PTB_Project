@@ -5,7 +5,7 @@ date: "2024-01-18"
 output: html_document
 ---
 
-# Hey! I am trying to organize all the work
+# PTB Project
 
 ## 1. Import libraries and data
 
@@ -503,7 +503,6 @@ V(network)$sig1 <- sig1
 V(network)$sig2 <- sig2
 #V(network)$sig <- sig
 
-
 df <- as_data_frame(network, "vertices")
 df$colors <- node.colors
 df2 <- df
@@ -521,7 +520,7 @@ colors1 <- colors_discovery[order(df$x),]$color
 colors2 <- colors_validation[order(df$x),]$color
 fill_color <- to_vec(for(i in 1:18) c(rep(colors2[i],181),rep(colors1[i],181)))
 
-png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=12, height = 8)
+# png(file=paste0(path_output,"/Figure_tmp.png"),res=900, units = 'in', width=12, height = 8)
 
 p <- ggraph(network,layout=l) +
   geom_edge_density(aes(fill = edge.color)) + 
@@ -543,14 +542,14 @@ p <- ggraph(network,layout=l) +
                   colour = 'black',
                   size=log10(node.size)*9,
                   shape = 21,alpha=0.1,stroke=NA) +
-  geom_point(data = df2,aes(x = x, y = y), size = 0.25,alpha=0.9,
+  geom_point(data = df2,aes(x = x, y = y), size = 0.5,alpha=0.9,
              col = df2$colors) +
   
   geom_scatterpie(aes(x=x, y=y,r = radius),
                   data = df,
                   cols=c('D','V'),
                   fill=fill_color,
-                  pie_scale = 1,
+                  pie_scale = 1,stroke=NA
                   )+
   geom_node_text(aes(label = sig1,x = x+radius*0.4, y = y),  colour = 'yellow', size=(log10(node.size)/5)*7,
                   show.legend = FALSE, family = "serif",angle = 90) +
@@ -561,7 +560,7 @@ p <- ggraph(network,layout=l) +
   theme_void()+
   theme(legend.position = "none") 
 p
-dev.off()
+# dev.off()
 
 # library(grid)
 # 
@@ -919,11 +918,13 @@ model1 <- lm(CT_mean ~ CD274*CD58, data=df,
              #family="binomial"
              )
 
-model1 <- lm(CD274  ~ CD58 + CNIH4, data=df, 
+
+model1 <- lm(CD58 ~ CD274 + CNIH4, data=df,
              #family="binomial"
              )
 
 summary(model1)
+
 x_tilde$CT_value <- predict(model1, x_tilde, type="response")
 
 ggplot(data=x_tilde, mapping = aes(x=CD274,y= CD58 )) + 
@@ -938,7 +939,6 @@ ggplot(data=x_tilde, mapping = aes(x=CD274,y= CD58 )) +
                                 'High'='#d73027'))+
   theme_bw()
 
-vst_data$CNIH4
 ```
 
 ### Correlation Analysis
