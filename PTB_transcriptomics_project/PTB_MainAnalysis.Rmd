@@ -43,6 +43,9 @@ library(mboost)
 library(DESeq2)
 library(CEMiTool)
 library(igraph)
+
+clinical <- read_csv(paste0(path_input,"/Raw_data/datafull_08_08_2023.csv"))%>% as.data.frame()
+View(clinical)
 ```
 
 ```{r}
