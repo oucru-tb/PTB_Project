@@ -1,0 +1,258 @@
+---
+title: "PTB_FinalMainAnalysis"
+author: "Triet Thai"
+date: "2024-03-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# PTB Transcriptomics Project
+
+## 1. Import libraries and data
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE)
+
+library(parallel)
+mcore<-1 # for Window PC
+
+#Load libraries
+library(dplyr)
+library(plyr)
+library(readxl)
+library(writexl)
+library(survival)
+library(glmnet)
+library(stabs)
+library(tidyverse)
+library(magrittr)
+library(Hmisc)
+library(gtsummary)
+library(WGCNA)
+library(ggcorrplot)
+library(scales)
+library(gridExtra)
+library(ggcorrplot)
+library(broom)
+library(rms)
+library(tidyverse)
+library(stabs)
+library(mboost)
+library(DESeq2)
+library(CEMiTool)
+library(igraph)
+library(flextable)
+library(pheatmap)
+library(ggplot2)
+library(ggplotify)
+```
+
+```{r}
+path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
+                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
+path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
+                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Triet_Results")
+
+load(paste0(path_input,"/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")) #vst_data 295 31425
+load(paste0(path_input,"/Raw_data/vst_Gensymbol_allTBM_281Sample_12Jan24.RData")) #tbm_vst 281 31381
+rownames(tbm_vst) <- tbm_vst$LIMS_ID
+load(paste0(path_input,"/Data/Fluidigm_PTB_data.Rdata"))
+load(paste0(path_input,"/Data/Most_variance_RNA_genes.Rdata"))
+load(file=paste0(path_input,"Raw_data/count_data_adjusted_ComBat.Rdata"))
+load(paste0(path_input, "Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
+All_sample_RNAseq <- readxl::read_excel(paste0(path_input,"Raw_data/All_sample_RNAseq.xlsx"),
+                                        sheet = "Run1and2") %>% as.data.frame()
+rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
+
+load(file=paste0(path_input,"Raw_data/Data_26_27_CT_CNIH4.Rdata.RData"))
+Fludigm_CNIH4_PTB <- get(load(paste0(path_input,'Raw_data/Fludigm_CNIH4_PTB.Rdata')))
+
+ModuleHubgeneCT <- read.csv(paste0(path_input,"Data/Modules-Hubgenes_CT_value.csv"))
+load(file=paste0(path_input,"Data/Gene Significance and Module Membership_clinical_trait.Rdata"))
+load(file = paste0(path_input,"Data/PTB-01-dataInput.RData"))
+load(file = paste0(path_input,"Data/PTB-02-networkConstruction-auto.RData"))
+load(file = paste0(path_input,"Data/Module_discovery.Rdata"))
+load(file=paste0(path_input,"Raw_data/PTB_TOM_10000-block.1.RData"))
+TOM1 <- as.matrix(TOM)
+colnames(TOM1) <- colnames(multiExpr[[1]]$data)
+rownames(TOM1) <- colnames(multiExpr[[1]]$data)
+
+clinical_2_discovery <- filter(clinical_2,cohort=='Discovery')
+rownames(clinical_2_discovery) <- clinical_2_discovery$LIMS_ID
+```
+
+```{r}
+vst_ptb_tbm <- rbind.fill(vst_data,tbm_vst)
+vst_ptb_tbm %<>% mutate(Type=ifelse(LIMS_ID %in% vst_data$LIMS_ID,"PTB","TBM"))
+
+healthy_ComBat <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,trial_number %in% c('HV','43TB'))$LIMS_ID)
+qt <- quantile(healthy_ComBat$CNIH4,c(0.75)) #Q3 CNIH4 of healthy control
+
+PTB_TBM_ComBat <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,(Timepoint=='D0') & (trial_number %in% c('MDR_PTB','DS_PTB','26TB','27TB')))$LIMS_ID)
+PTB_TBM_ComBat %<>% mutate(CNIH4level=ifelse((CNIH4<qt[1]),1,2))
+
+vst_ptb_tbm <- merge(vst_ptb_tbm,PTB_TBM_ComBat %>% select('LIMS_ID','CNIH4level'),by="LIMS_ID")
+rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
+```
+
+## 2. Helper functions
+
+```{r}
+posterior_predict_hurdle_gaussian <- function(i, prep, ...) {
+  mu <- brms::get_dpar(prep, "mu", i = i)
+  sigma <- brms::get_dpar(prep, "sigma", i = i)
+  theta <- brms::get_dpar(prep, "hu", i = i)
+     
+  hu <- runif(prep$ndraws, 0, 1)
+  ifelse(hu < theta, 0, rnorm(prep$ndraws, mu,sigma))
+}
+   
+posterior_epred_hurdle_gaussian <- function(prep) {
+  with(prep$dpars, mu * (1 - hu))
+}
+
+cor.pval.test <- function(x1, x2, ...) {
+  r <- ncol(x1)
+  n <- ncol(x2)
+  p.mat<- matrix(NA, r, n)
+  for (i in 1:r) {
+    for (j in 1:n) {
+      tmp <- cor.test(x1[, i], x2[, j], ...)
+      p.mat[i, j] <- tmp$p.value
+    }
+  }
+  rownames(p.mat) <-  colnames(x1)
+  colnames(p.mat) <- colnames(x2)
+  return(p.mat)
+}
+
+anno_gene_symbol <- function(data,data_anno,export, name=NULL){
+  anno_DESeq2 <- data_anno[,c("gene_id", "gene_symbol")]
+  anno_DESeq2 <- subset(anno_DESeq2, gene_id %in% data$gene_id)
+  data
+  return(data)
+}
+
+get_genelist_pathway_kegg <- function(hsa_ID){
+  library("KEGGREST")
+  names <- keggGet(hsa_ID)[[1]]$GENE
+  namesodd <-  names[seq(0,length(names),2)]
+  namestrue <- gsub("\\;.*","",namesodd)
+}
+
+draw_colnames_45 <- function (coln, gaps, ...) {
+    coord <- pheatmap:::find_coordinates(length(coln), gaps)
+    x     <-  coord$coord - 0.5 * coord$size
+    res   <- grid::textGrob(
+      coln, x = x, y = unit(1, "npc") - unit(3,"bigpts"),
+      vjust = 0.75, hjust = 1, rot = 45, gp = grid::gpar(...)
+    )
+    return(res)
+}
+
+assignInNamespace(
+  x = "draw_colnames",
+  value = "draw_colnames_45",
+  ns = asNamespace("pheatmap")
+)
+
+# Modify ordering of the clusters using clustering callback option
+callback <- function(hc, mat){
+    sv = svd(t(mat))$v[,1]
+    dend = reorder(as.dendrogram(hc), wts = sv)
+    as.hclust(dend)
+}
+
+make_face_names <- function(mat, rc_fun, rc_names_b = NA, 
+                            rc_names_i = NA) {
+  f_names <- rc_fun(mat)
+  ids_b <- rc_names_b %>% match(rc_fun(mat))
+  ids_i <- rc_names_i %>% match(rc_fun(mat))
+  
+  ids_b %>%
+    walk(
+      function(i)
+        f_names[i] <<-
+        bquote(bold(.(rc_fun(mat)[i]))) %>%
+        as.expression()
+    )
+  ids_i %>%
+    walk(
+      function(i)
+        f_names[i] <<-
+        bquote(italic(.(rc_fun(mat)[i]))) %>%
+        as.expression()
+    )
+  
+  f_names
+}
+
+color.bar <- function(lut, min, max=-min, nticks=11, ticks=seq(min, max, len=nticks), title='') {
+  scale = (length(lut)-1)/(max-min)
+  plot(c(0,10), c(min,max), type='n', bty='n', xaxt='n', xlab='', yaxt='n', ylab='', main=title)
+  axis(2, ticks, las=1)
+  for (i in 1:(length(lut)-1)) {
+    print(lut[i])
+    y = (i-1)/scale + min
+    rect(0,y,10,y+1/scale, col=lut[i], border=NA)
+  }
+}
+```
+
+### 3. Main Analysis
+
+### 3.1. Correlation Heatmap CNIH4 vs 27 ICs
+
+```{r}
+IC_names<-c('CD200', 'CD2','CD58','TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
+             'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
+             'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9','CNIH4')
+ICvsCNIH4_df <- vst_data %>% select(IC_names)
+ICvsCNIH4_df <- ICvsCNIH4_df[vapply(ICvsCNIH4_df, 
+                                    function(x) length(unique(x)) > 1, 
+                                    logical(1L))] %>% dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
+                                                                    'CD274/PDL1'='CD274',
+                                                                    'LGALS9/Galactin-9'='LGALS9',
+                                                                    'PDCD1/PD1'='PDCD1')
+
+cor_method = 'spearman'
+ICvsCNIH4_mat <- cor(ICvsCNIH4_df,
+                      use='pairwise.complete.obs',
+                      method = cor_method)
+
+p.ICvsCNIH4_mat <- cor.pval.test(ICvsCNIH4_df, 
+                                  ICvsCNIH4_df, 
+                                  method=cor_method, 
+                                  use='pairwise.complete.obs')
+
+#col=c("#001164", 'white', "#FF681E")
+#col=c("#5E81AC", '#EBCB8B', "#BF616A")
+col=c("#395b85", 'white', "#FF681E")
+# CNIH4 vs 25 ICs
+mat1 <- ICvsCNIH4_mat
+p.mat1 <- p.ICvsCNIH4_mat
+labels1 <-round(mat1,2)
+vals1 <- labels1
+vals1[p.mat1 > 0.05] <- 0
+labels1[p.mat1 > 0.05] <- ''
+
+myBreaks <- c(seq(-1, 0, length.out=ceiling(1000/2) + 1),
+              seq(1/1000, 1, length.out=floor(1000/2)))
+
+p01 <- pheatmap(vals1,
+               color = colorRampPalette(col)(1000),
+               breaks=myBreaks,
+               display_numbers=labels1,
+               show_colnames = F,legend = F)
+p01
+row.order <- p01$tree_row$order
+col.order <- p01$tree_col$order
+p1 <- as.ggplot(p01)
+```

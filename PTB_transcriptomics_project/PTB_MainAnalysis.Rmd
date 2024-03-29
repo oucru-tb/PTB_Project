@@ -44,52 +44,44 @@ library(DESeq2)
 library(CEMiTool)
 library(igraph)
 library(flextable)
+
 # clinical <- read_csv(paste0(path_input,"/Raw_data/datafull_08_08_2023.csv"))%>% as.data.frame()
 # View(clinical)
 
-path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
-                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
- 
-mri26TB <- read_csv(paste0(path_input,"/Raw_data/check_list_26.csv"))%>% as.data.frame() %>% drop_na(date_take)
-mri27TB <- read_csv(paste0(path_input,"/Raw_data/check_list_27.csv"))%>% as.data.frame() %>% drop_na(date_take)
-load(paste0(path_input,'/Raw_data/Baseline_26TB_27TB_18August2023_27TB_entry1_Khanh.RData'))
-
-dim(mri26TB %>% drop_na(date_take))
-
-
-
-
-cinical_cols <- c('study','SEX','AGE','WEIGHT','GCS','TBMGRADE','CSFLYMLE','CSFGLUC','LACTATE','study','ULTIMATE_diagnosis')
-clinical_mri <- Baseline_26TB_27TB %>% filter(USUBJID %in% c(unique(mri26TB$PatientID),unique(mri27TB$PatientID)))%>%select(all_of(cinical_cols))
-
-table <- clinical_mri %>% 
-  tbl_summary(
-    by = study, # split table by group
-    missing = "ifany", # don't list missing data separately,
-    missing_text = "Missing",
-    label = list(AGE~"Age (years)",
-                 WEIGHT~"Weight (kg)",
-                 TBMGRADE~"TBM Grade",
-                 CSFLYMLE~"CSF lymphocyte count (cell/uL)",
-                 CSFGLUC~"CSF glucose",
-                 LACTATE~"CSF lactate",
-                 ULTIMATE_diagnosis~'TBM diagnosis'
-                 ),
-    
-  ) %>%add_overall() %>%
-  add_n() %>% # add column with total number of non-missing observations
-  modify_header(label = "**Variable**") %>% # update the column header
-  modify_footnote(
-  all_stat_cols() ~ "Median (Quartile 1, Quartile 3)")%>%
-  bold_labels()
-table%>%as_flex_table() %>% save_as_docx(path =paste0(path_output,"/MRI.docx"))
-table
-```
-
-```{r}
-path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
-                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
-load(paste0(path_input,"/Raw_data/Baseline_26TB_27TB_18August2023_27TB_entry1.RData")) 
+# path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
+#                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
+#  
+# mri26TB <- read_csv(paste0(path_input,"/Raw_data/check_list_26.csv"))%>% as.data.frame() %>% drop_na(date_take)
+# mri27TB <- read_csv(paste0(path_input,"/Raw_data/check_list_27.csv"))%>% as.data.frame() %>% drop_na(date_take)
+# load(paste0(path_input,'/Raw_data/Baseline_26TB_27TB_18August2023_27TB_entry1_Khanh.RData'))
+# 
+# dim(mri26TB %>% drop_na(date_take))
+# 
+# cinical_cols <- c('study','SEX','AGE','WEIGHT','GCS','TBMGRADE','CSFLYMLE','CSFGLUC','LACTATE','study','ULTIMATE_diagnosis')
+# clinical_mri <- Baseline_26TB_27TB %>% filter(USUBJID %in% c(unique(mri26TB$PatientID),unique(mri27TB$PatientID)))%>%select(all_of(cinical_cols))
+# 
+# table <- clinical_mri %>% 
+#   tbl_summary(
+#     by = study, # split table by group
+#     missing = "ifany", # don't list missing data separately,
+#     missing_text = "Missing",
+#     label = list(AGE~"Age (years)",
+#                  WEIGHT~"Weight (kg)",
+#                  TBMGRADE~"TBM Grade",
+#                  CSFLYMLE~"CSF lymphocyte count (cell/uL)",
+#                  CSFGLUC~"CSF glucose",
+#                  LACTATE~"CSF lactate",
+#                  ULTIMATE_diagnosis~'TBM diagnosis'
+#                  ),
+#     
+#   ) %>%add_overall() %>%
+#   add_n() %>% # add column with total number of non-missing observations
+#   modify_header(label = "**Variable**") %>% # update the column header
+#   modify_footnote(
+#   all_stat_cols() ~ "Median (Quartile 1, Quartile 3)")%>%
+#   bold_labels()
+# table%>%as_flex_table() %>% save_as_docx(path =paste0(path_output,"/MRI.docx"))
+# table
 ```
 
 ```{r}
@@ -97,6 +89,7 @@ path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Triet_Results")
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
+
 load(paste0(path_input,"/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")) #vst_data 295 31425
 load(paste0(path_input,"/Raw_data/vst_Gensymbol_allTBM_281Sample_12Jan24.RData")) #tbm_vst 281 31381
 rownames(tbm_vst) <- tbm_vst$LIMS_ID
@@ -356,7 +349,6 @@ p.validation<- p.validation[match(rownames(mat2), rownames(p.validation)),]
 
 module_all <- c(module_discovery,module_validation)
 module_all
-
 ```
 
 ```{r}
@@ -1829,7 +1821,17 @@ p
 ```
 
 ```{r}
-for(i in 1:2){
-  print(i)
-}
+
+```
+
+### Isoforms quantification
+
+```{r}
+smtx_counts <- read.csv(paste0(path_input,"/Data/salmon-tx-counts.tsv"),sep='\t')
+row.names(smtx_counts) <- smtx_counts$transcript_name
+smtx_counts <- t(smtx_counts[,7:302])
+```
+
+```{r}
+smtx_counts <- t(smtx_counts[,7:302])
 ```
