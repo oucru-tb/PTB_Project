@@ -1,0 +1,3038 @@
+---
+title: "WGCNA transcriptomics PTB analysis"
+output: html_document
+date: '2023-05-31'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(parallel)
+mcore<-12
+# mcore<-1# for Window PC
+#Load libraries
+library(dplyr)
+library(readxl)
+library(writexl)
+library(survival)
+library(glmnet)
+library(stabs)
+library(tidyverse)
+library(magrittr)
+library(Hmisc)
+library(gtsummary)
+library(WGCNA)
+library(ggcorrplot)
+library(scales)
+library(gridExtra)
+library(ggcorrplot)
+library(broom)
+library(rms)
+library(tidyverse)
+library("stabs")
+library("mboost")
+library(DESeq2)
+library(latex2exp)
+library(ggpmisc)
+library(ggpubr)
+###--- Set Directory ---###
+local_dir<-getwd()
+setwd(local_dir)
+###------Import clinical and clean RNAseq and PCR data------###
+load(file="Data/Most_variance_RNA_genes.Rdata")
+load(file="Data/Fluidigm_PTB_data.Rdata")
+# Output Link
+path_output<-"Results"
+path_output_1<-"Results/Derive_results"
+path_output_2<-"Results/Figures_Tables"
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+# Import raw RNA_seq data, do the do the stabilizing variance transformation, and select the top 10000 with high variances genes
+path_input_RNA <- "Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"
+lnames <- load(path_input_RNA)
+
+## load clinical data from the meta data
+All_sample_RNAseq <- readxl::read_excel("Raw_data/All_sample_RNAseq.xlsx",sheet = "Run1and2") %>% as.data.frame()
+rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
+
+## check clinical data and count data 
+all(rownames(All_sample_RNAseq) %in% colnames(count_all))
+dim(All_sample_RNAseq)## 1276 samples
+
+## Extract only the data for PTB cohort (28,29TB)
+PTB_sample_RNAseq <- All_sample_RNAseq %>% subset(Study %in% c("28TB","29TB"))
+count_data <-count_all[,rownames(PTB_sample_RNAseq)]
+
+## create anno data
+anno_symbol <- anno[,c("gene_id", "gene_symbol")] %>% filter(gene_id %in% rownames(count_data))
+rownames(anno_symbol) <- anno_symbol$gene_id
+anno_symbol <- anno_symbol[rownames(count_data),]
+## add gene symbol to count data
+count_data <- cbind(genenames=anno_symbol$gene_symbol,count_data)
+## Some genes have multiple segments that map to one gene. Thus, the counts of that gene is the sum of all the segments counts of that genes
+count_deseq2 <- count_data %>%
+                group_by(genenames) %>%
+                summarise_all(sum) %>%
+                data.frame()
+rownames(count_deseq2) <- count_deseq2$genenames
+
+count_deseq2 %<>% dplyr::select(-genenames)
+
+## filter low expressed genes
+filter_min_group <- ncol(count_deseq2)/5
+## filter for gene expression of 10 counts in more than 20% sample
+filter_gene <- apply(count_deseq2, 1, function(x) length(x[x>10]) >= filter_min_group) 
+count_deseq2 <- count_deseq2[filter_gene,] %>% as.matrix()
+
+## normalize vst by deseq2
+PTB_sample_RNAseq %<>% mutate(Study=factor(Study))
+dds <- DESeqDataSetFromMatrix(count_deseq2, colData=PTB_sample_RNAseq, ~ Study)
+# rownames(dds)
+# dds_anno <- anno_gene_symbol(data = dds,data_anno = anno,export = F,name = NULL)
+vsd <- assay(vst(dds, blind=T)) # Variance stablized transform with log transform
+vsd_t<-vsd %>% t() %>%
+ as.data.frame() %>%
+ tibble::rownames_to_column(var='LIMS_ID') %>%
+ as.data.frame()
+
+RNA_data<-vsd_t %>% select(-LIMS_ID)
+rownames(RNA_data)<-vsd_t$LIMS_ID
+
+## Method 1:  Using variance_based filtering method to filter gene most variance
+
+RNA_data_transpose <- as.data.frame(t(RNA_data))
+RNA_data_transpose_filtered <- filter_genes(RNA_data_transpose,pct =.75) #.75
+# Selected genes
+selected <- select_genes(RNA_data_transpose_filtered,filter_pval=0.35) #0.35
+
+# ## Method 2:  Using the top 10000 genes as the most variance
+# dv <- NULL
+# dv$Symbols <- colnames(RNA_data)
+# dv$variance <- matrixStats::colVars(as.matrix(RNA_data))
+# dv <- as.data.frame(dv)
+# ## sorting gene by var
+# dv <- dv[order(dv$variance, decreasing = TRUE),]
+# 
+# 
+# RNA_data$LIMS_ID<-vsd_t$LIMS_ID
+# selected <- dv$Symbols[1:10000] #method 2 choose 10000 genes most variant
+
+RNA_data <- RNA_data[,selected]
+RNA_data$LIMS_ID<-vsd_t$LIMS_ID
+
+####----Check the level of expression between two batches----###
+expr_normalized_df <- data.frame(RNA_data) %>%
+  pivot_longer(cols=RN7SL1:ZNF876P)
+expr_normalized_df<-plyr::join_all(list(expr_normalized_df,PTB_sample_RNAseq)) %>% 
+                    mutate(seq_Batch=factor(seq_Batch))
+
+
+expr_normalized_df %>% ggplot(., aes(x = seq_Batch, y = value)) +
+  geom_violin() +
+  geom_jitter(width = 0.1,alpha=0.1,size=1) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text( angle = 90)
+  ) +
+  ylim(0, NA) +
+  labs(
+    title = "Normalized and 95 quantile Expression",
+    x = "treatment",
+    y = "normalized expression"
+  )+ theme(plot.title = element_text(hjust = 0.5))->p
+
+png(file=paste0(path_output,"/Gene_expression_after_normalized_by_study.png"),
+    res=400, units = 'in', width = 10, height =5)
+p
+dev.off()
+
+####--------------------------------------------------------------------####
+
+gene_names_full<-colnames(RNA_data)
+gene_names_full<-gsub("-","_",gene_names_full)
+colnames(RNA_data)<-gene_names_full
+
+###---- Import PCR Fluidigm data ----###
+path_input_Fluidigm <- "Raw_data/Fluidigm_PTB_wide_2Jan2023.RData"
+load(path_input_Fluidigm)
+Fluidigm_PTB_wide %<>% as.data.frame() %>% dplyr::rename("Patient_ID"="studycode")
+Patient_Fluidigm_PTB<-Fluidigm_PTB_wide$Patient_ID
+###----------------------------------###
+
+## Import clinical data for RNA_seq and for PCR data
+path_input_clinical<-"Raw_data/Clinical full data 913 patients.csv"
+clinical <- read_csv(path_input_clinical)%>% as.data.frame()
+####-----Clinical data---####
+clinical_2<-clinical %>% select("studycode","DiagnosisAge","Gender","bmi","Timika.score","DM","Cavity","Lung.proportion","CT_Xpert_mean","LIMS_ID","HGB","WBC","NEUTLE","LYMLE","MONOLE","EOSLE","PLAT","DUR","study","TBTreatedBefore") %>% 
+  mutate("Treatment_sensitive"=ifelse(study=="28TB","MDR","DS")) %>% 
+  dplyr::rename("Patient_ID"="studycode",
+                "Neutrophil"="NEUTLE",
+                "Lymphocyte"="LYMLE",
+                "Monocyte"="MONOLE",
+                "Eosinophil"="EOSLE",
+                "Platelet"="PLAT",
+                "Symptom_duration"="DUR",
+                "Diabetes"="DM",
+                "Lung_proportion"="Lung.proportion",
+                "Age"="DiagnosisAge",
+                "Timika_score"="Timika.score",
+                "TB_History"="TBTreatedBefore"
+                )
+
+clinical_2 %<>% mutate(Neutrophil_counts=WBC*Neutrophil*0.01,
+                     log2_Neutrophil_counts=log2(Neutrophil_counts),
+                     Lymphocyte_counts=WBC*Lymphocyte *0.01,
+                     log2_Lymphocyte_counts=log2(Lymphocyte_counts),
+                     Monocyte_counts=WBC*Monocyte*0.01,
+                     log2_Monocyte_counts=log2(Monocyte_counts),
+                     Eosinophil_counts=WBC*Eosinophil*0.01,
+                     log2_Eosinophil_counts=log2(Eosinophil_counts),
+                     log2_Symptom_duration=log2(Symptom_duration+1),
+                     log2_Platelet_counts =log2(Platelet),
+                     log2_CT=log2(CT_Xpert_mean))
+
+# Remove one patient with RNA_seq quality low
+clinical_2%<>% filter(!is.na(LIMS_ID)&LIMS_ID!="HOA7818A92"|Patient_ID%in%Patient_Fluidigm_PTB)
+
+clinical_RNA_PTB <- clinical_2 %>% filter(!is.na(LIMS_ID)) %>% as.data.frame()
+
+
+clinical_Fluidigm_PTB <- clinical_2 %>% filter(Patient_ID%in%Patient_Fluidigm_PTB) %>% as.data.frame()
+
+# Here we only combine the 295 patients who have good RNA_seq quality
+clinical_RNA<-merge(RNA_data,clinical_RNA_PTB,by="LIMS_ID")
+RNA_data<-clinical_RNA[,gene_names_full]
+rownames(RNA_data)<-rownames(clinical_RNA)<-clinical_RNA$LIMS_ID
+
+# Here we only combine the 190 patients who have good PCR Fluidigm quality
+clinical_Fluidigm<-merge(Fluidigm_PTB_wide,clinical_Fluidigm_PTB,by="Patient_ID")
+
+
+clinical_2 %<>% mutate(cohort=ifelse(Patient_ID%in%Patient_Fluidigm_PTB,"Validation","Discovery"))
+
+save(Fluidigm_PTB_wide,clinical_2,clinical_Fluidigm,file="Data/Fluidigm_PTB_data.Rdata")
+save(RNA_data,clinical_RNA,clinical_2,file="Data/Most_variance_RNA_genes.Rdata")
+```
+
+# Patient characteristics of discovery and validation cohort
+
+```{r echo=FALSE}
+clinical_RNA%<>% as.data.frame() %>% mutate(log2_CT=log2(CT_Xpert_mean))
+datExpr0<-datExpr<-RNA_data %>% select(-LIMS_ID)
+gene_names_full<-colnames(datExpr)
+```
+
+
+```{r echo=FALSE}
+splitting_set_size <- 0.5
+set.seed(1234) #4650
+n<-nrow(clinical_RNA)
+index_set_1 <- sample (1:n, floor(splitting_set_size * nrow(clinical_RNA)), replace=F)
+index_set_2<-(1:n)[!(1:n%in%index_set_1)]
+clinical_tmp<-clinical_RNA %>% select("Age","Gender","bmi","Treatment_sensitive","TB_History","Symptom_duration","Diabetes",
+                             "CT_Xpert_mean","HGB","WBC","Neutrophil_counts","Lymphocyte_counts","Monocyte_counts","Eosinophil_counts",
+                              "Timika_score","Cavity","Lung_proportion")
+set_1_set  <- clinical_tmp[index_set_1,] 
+set_2_set  <- clinical_tmp[index_set_2,]
+
+# Overview patient characteristics to see if the characteristics are distributed equally
+set_1_set$Set <- 'Train set'
+set_2_set$Set <- 'Test set'
+
+PTB_sets <- rbind(set_1_set, set_2_set) %>% 
+  mutate(Set=factor(Set,levels=c('Train set','Test set')))
+
+table <- PTB_sets %>% 
+  tbl_summary(
+    by = Set, # split table by group
+    missing = "ifany", # don't list missing data separately,
+    label = list( Age~"Age [year]",
+                  bmi~"BMI [kg/m2]",
+                  TB_History~"TB History",
+                  Symptom_duration~"Symptom duration (days)",
+                  Diabetes~"Diabetes Metilus",
+                  CT_Xpert_mean~"GeneXpert mean Ct value",
+                  HGB~ "Hemoglobin (g/dl)", ## HGB
+                  WBC~"Total white blood cell counts (G/L)",
+                  Neutrophil_counts~"Neutrophil count (G/L)",
+                  Lymphocyte_counts~"Lymphocyte count (G/L)",
+                  Monocyte_counts~"Monocyte count (G/L)",
+                  Eosinophil_counts~"Eosinophil count (G/L)",
+                  Timika_score~"Chest X-ray Timika score",
+                  Cavity~"Chest Xray Cavity",
+                  Lung_proportion~"Lung proportion damage (%)"
+                )
+  ) %>%
+  add_n() %>% # add column with total number of non-missing observations
+  add_p() %>% # test for a difference between groups
+  modify_header(label = "**Variable**") %>% # update the column header
+  bold_labels()
+table
+```
+
+# Data input,cleaning and pre-processing for combined cohorts
+
+```{r eval=FALSE, include=FALSE}
+#  Checking data for excessive missing values 
+gsg = goodSamplesGenes(datExpr0, verbose = 3);
+gsg$allOK
+# It seems fine
+# Here is if not
+if (!gsg$allOK)
+{
+  # Optionally, print the gene and sample names that were removed:
+  if (sum(!gsg$goodGenes)>0) 
+    printFlush(paste("Removing genes:", paste(names(datExpr0)[!gsg$goodGenes], collapse = ", ")));
+  if (sum(!gsg$goodSamples)>0) 
+    printFlush(paste("Removing samples:", paste(rownames(datExpr0)[!gsg$goodSamples], collapse = ", ")));
+  # Remove the offending genes and samples from the data:
+  datExpr0 = datExpr0[gsg$goodSamples, gsg$goodGenes]
+}
+```
+
+### Detect and remove outliers
+
+```{r eval=FALSE, include=FALSE}
+#  Identification of outliers microarray samples
+sampleTree = hclust(dist(datExpr0,method="minkowski",p=2), method = "average");
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small.
+sizeGrWindow(12,9)
+png(file=paste0(path_output_2,"/Figure_Sample_Clustering.png"),width=1200, height=350)
+
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5, 
+     cex.axis = 1.5, cex.main = 2)
+# Plot a line to show the cut
+abline(h = 120, col = "red");
+dev.off()
+```
+
+
+```{r include=FALSE}
+# Determine cluster under the line
+clust = cutreeStatic(sampleTree, cutHeight = 120, minSize = 10)
+table(clust)
+# clust 1 contains the samples we want to keep.
+keepSamples = (clust==1)
+# This is the data for the main analysis
+datExpr = datExpr0[keepSamples,]
+nGenes = ncol(datExpr)
+nSamples = nrow(datExpr)
+
+## It appears there was no outliers (see Fig. 1).  
+## We  remove it and use a branch cut at that height
+```
+
+
+# Perform the WGCNA analysis on discovery cohort (independent set 1)
+
+```{r include=FALSE}
+
+clinical_RNA_discovery  <- clinical_RNA[index_set_1, ]
+datExpr_discovery       <- RNA_data[index_set_1, ] %>% select(-LIMS_ID)
+
+clinical_RNA_validation  <- clinical_RNA[index_set_2, ]
+datExpr_validation       <- RNA_data[index_set_2, ] %>% select(-LIMS_ID)
+
+# We work with two sets:
+nSets = 2;
+# For easier labeling of plots, create a vector holding descriptive names of the two sets.
+setLabels = c("PTB discovery", "PTB validation")
+shortLabels = c("discovery", "validation")
+
+# Form multi-set expression data
+multiExpr = vector(mode = "list", length = nSets)
+multiExpr[[1]] = list(data = datExpr_discovery);
+multiExpr[[2]] = list(data = datExpr_validation);
+names(multiExpr)<-shortLabels
+
+# Check that the data has the correct format for many functions operating on multiple sets:
+exprSize = checkSets(multiExpr)
+# exprSize = checkSets(multiClinical_Expr)
+```
+
+
+### Process trait phenotype
+
+```{r}
+# clinical trait data
+trait_clinical_RNA  <- clinical_RNA %>%
+  select("Age","Gender","bmi","Treatment_sensitive","Diabetes","log2_CT","Cavity","Lung_proportion") %>%
+  mutate(Gender=as.numeric(as.factor(Gender))-1,
+         Diabetes=as.numeric(as.factor(Diabetes))-1,
+         Treatment_sensitive=as.numeric(as.factor(Treatment_sensitive))-1,
+         Cavity=as.numeric(as.factor(Cavity))-1) 
+Hmisc::describe(trait_clinical_RNA)
+str(trait_clinical_RNA)
+
+## create data list to containt trait data for both cohorts 
+traitData = vector(mode="list", length = nSets);
+for (set in 1:nSets){
+  setSamples = rownames(multiExpr[[set]]$data);
+  traitRows = match(setSamples, rownames(trait_clinical_RNA));
+  traitData[[set]] = list(data = trait_clinical_RNA[traitRows,]);
+  rownames(traitData[[set]]$data) = rownames(trait_clinical_RNA[traitRows,]);
+}
+collectGarbage(); #  Performs garbage collection until free memory indicators show no change
+
+# Define data set dimensions
+nGenes = exprSize$nGenes;
+nSamples = exprSize$nSamples;
+```
+
+### Cluster of patients vs clinical phenotype
+
+```{r eval=FALSE, include=FALSE}
+# Re-cluster samples
+sampleTrees = list(); traitColors= list()
+for (set in 1:nSets){
+  sampleTrees[[set]] = hclust(dist(multiExpr[[set]]$data), method = "average");
+  traitColors[[set]] = numbers2colors(traitData[[set]]$data, signed = FALSE);
+}
+
+for (set in 1:nSets){
+  sizeGrWindow(12,9)
+  png(file =  paste0(path_output_2,"/Figure_Sample_dendrogram_and_trait_heatmap_",
+                      shortLabels[set],".png"),width=1200, height=350)
+  par(cex = 1);
+  par(mfrow=c(2,1),mar = c(0, 4, 0, 4))
+  plotDendroAndColors(sampleTrees[[set]], traitColors[[set]],
+                      groupLabels = names(traitData[[set]]$data),
+                      main = paste("Sample dendrogram and trait heatmap in ", setLabels[set]),
+                      marAll = c(1, 6.5, 1, 2))
+  dev.off()
+}
+# This figure show that the good mixing of the population
+```
+
+### Save input data for next steps
+
+```{r}
+save(multiExpr, traitData,nGenes,nSamples,exprSize,setLabels,shortLabels, file =paste0("Data","/PTB-01-dataInput.RData"))
+```
+
+
+
+## Network construction and module detection on discovery cohort
+
+```{r include=FALSE}
+# Load the data saved in the first part
+lnames <- load(file = paste0("Data","/PTB-01-dataInput.RData"))
+lnames
+getwd()
+enableWGCNAThreads(nThreads = 12)
+# Get the number of sets in the multiExpr structure.
+nSets = checkSets(multiExpr)$nSets
+```
+
+### Analysis of network topology for various soft-thresholding powers and pick powers on the discovery set
+
+```{r Figure S1_A_B}
+# Choose a set of soft-thresholding powers
+powers = c(1:20);
+# Call the network topology analysis function
+# sft = pickSoftThreshold(multiExpr[[1]]$data, powerVector = powers, verbose = 5,
+#                         blockSize=10000,RsquaredCut = 0.85)
+# save(sft,file="Data/sft_Pearson.Rdata")
+
+load(file="Data/sft_Pearson.Rdata")
+plotData<-data.frame(soft_thresholding_power=sft$fitIndices[,1],fitIndices=-sign(sft$fitIndices[,3])*sft$fitIndices[,2],median_connectivity=sft$fitIndices[,6])
+
+png(file =  paste0(path_output_2,"/Figure_S1A_S1B_Network_topology_vs_soft_thresholding_powers_on_discovery_set.png"), wi = 10, 
+     he = 5, units = "in",res=480)
+
+# Scale-free topology fit index as a function of the soft-thresholding power
+
+p1<-ggplot(data=plotData,aes(x=soft_thresholding_power,y=fitIndices))+geom_text(aes(label=soft_thresholding_power))+xlab("Soft Threshold (power)")+ylab(TeX("Scale Free Topology Model Fit, signed  $\\R^2$"))+
+    theme_bw()+scale_y_continuous(breaks=c(-0.5,0,0.5,0.9,1))+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Scale independence")+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))+geom_hline(yintercept =c(0.9),linetype="dashed",col=c("red"))
+
+p2<-ggplot(data=plotData,aes(x=soft_thresholding_power,y=median_connectivity))+geom_text(aes(label=soft_thresholding_power))+xlab("Soft Threshold (power)")+ylab("Median Connectivity")+scale_y_continuous(breaks=c(0,100,500,1000,1500))+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Median Connectivity")+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))+geom_hline(yintercept =c(100),linetype="dashed",col=c("red"))
+cowplot::plot_grid(p1,p2, nrow = 1)
+dev.off()
+
+sft$fitIndices[,5][8:15]
+
+# estimated power = 5 corresponds to R2>0.9 and median.k.>100
+```
+
+### Construct network on the discovery set
+
+```{r eval=FALSE, include=FALSE}
+#power=sft$powerEstimate
+# for this code, it conficts with some packages so rerun this chunk code twice to make it works
+getwd();
+workingDir = ".";
+setwd(workingDir);
+library(WGCNA)
+
+options(stringsAsFactors = FALSE);
+enableWGCNAThreads(nThreads = 12);
+
+power=5
+net = blockwiseModules(multiExpr[[1]]$data, power = power,
+                       maxBlockSize = 10000,
+                       networkType="unsigned",
+                       TOMType = "signed", minModuleSize = 30,
+                       reassignThreshold = 0, mergeCutHeight = 0.25,
+                       numericLabels = TRUE, pamRespectsDendro = FALSE,
+                       saveTOMs = TRUE,
+                       saveTOMFileBase = "PTB_TOM_10000", 
+                       verbose = 3)
+save(net,file="Data/network_construction_PTB.RData")
+```
+
+
+#### Module detection on the discovery set
+
+
+```{r include=FALSE}
+l<-load(file="Data/network_construction_PTB.RData")
+moduleLabels <- net$colors
+labels2colors(unique(net$colors))
+
+moduleColors <- labels2colors(net$colors)
+
+MEs_discovery <- net$MEs;
+geneTree <- net$dendrograms[[1]];
+save(net,MEs_discovery, moduleLabels, moduleColors, geneTree, 
+     file = "Data/PTB-02-networkConstruction-auto.RData")
+```
+
+#### Plot the gene denogram with detected  module 
+
+```{r Figure S1_C_D, include=FALSE}
+load(file="Data/network_construction_PTB.RData")
+# open a graphics window
+sizeGrWindow(12, 9)
+# Convert labels to colors for plotting
+mergedColors = labels2colors(net$colors)
+# Plot the dendrogram and the module colors underneath
+png(file=paste0(path_output_2,"/Figure_S1C_gene_dendogram_vs_merged_module.png"),wi = 10, 
+     he = 5, units = "in",res=480)
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+dev.off()
+
+t <- as.vector(table(moduleColors))
+png(file = paste0(path_output_2,"/Figure_S1D_ModuleGenenumber.png"), wi = 9.5, 
+     he = 5, units = "in",res=350)
+barplot(t, names.arg = names(table(moduleColors)), col = names(table(moduleColors)), 
+        ylab = "Number of genes", main = "Genes in Module")
+dev.off()
+```
+
+
+## Plot the total network
+
+#### Calculation of module preservation in validation cohort
+
+```{r}
+## load input data
+lnames <- load(file ="Data/PTB-01-dataInput.RData")
+lnames
+## load network data construct in discovery 
+lnames <- load(file = "Data/PTB-02-networkConstruction-auto.RData")
+lnames
+
+## create input data for preservation analysis
+multiExpr_preservation = list(discovery = list(data = multiExpr[[1]]$data), validation = list(data = multiExpr[[2]]$data));
+multiColor = list(discovery = moduleColors);
+
+enableWGCNAThreads(nThreads = 12)
+if (!file.exists("Data/PTB-modulePreservation_2.RData")) {
+  system.time({
+  mp = modulePreservation(multiExpr_preservation, multiColor,
+                          networkType = "unsigned",
+                          referenceNetworks = 1,
+                          nPermutations = 2000,
+                          maxModuleSize=1500,
+                          maxGoldModuleSize=1000,
+                          randomSeed = 1,
+                          quickCor = 0,
+                          verbose = 3,
+                          parallelCalculation = T)
+  });
+  save(mp, file = "Data/PTB-modulePreservation_2.RData")
+} else load(file = "Data/PTB-modulePreservation_2.RData")
+```
+
+
+#### Visualize of module preservation plot
+
+*Of note, need to perform extra permutation test and preservation analysis. Discuss with Hai*
+
+
+```{r Figure S2: Visualize of module preservation plot}
+load(file = "Data/PTB-modulePreservation_2.RData")
+discovery = 1
+validation = 2
+statsObs = cbind(mp$quality$observed[[discovery]][[validation]][, -1], mp$preservation$observed[[discovery]][[validation]][, -1])
+statsZ = cbind(mp$quality$Z[[discovery]][[validation]][, -1], mp$preservation$Z[[discovery]][[validation]][, -1]);
+
+# Compare preservation to quality:
+print( cbind(statsObs[, c("medianRank.pres", "medianRank.qual")],
+             signif(statsZ[, c("Zsummary.pres", "Zsummary.qual")], 2)) )
+
+# Module labels and module sizes are also contained in the results
+modColors = rownames(mp$preservation$observed[[discovery]][[validation]])
+moduleSizes = mp$preservation$Z[[discovery]][[validation]][, 1];
+
+# leave grey and gold modules out if you want
+#plotMods = !(modColors %in% c("grey", "gold"));
+#text = modColors[plotMods];
+
+# Text labels for points
+plotMods = !(modColors %in% c(NA));
+text = modColors
+# Auxiliary convenience variable
+plotData = data.frame(medianRank=mp$preservation$observed[[discovery]][[validation]][, 2], Z_summary=mp$preservation$Z[[discovery]][[validation]][, 2],module_names=modColors,module_sizes=moduleSizes)
+png(file=paste0(path_output_2,"/Figure_S2B_PTB-modulePreservation.png"), wi = 12, he = 9,units = 'in', res = 480)
+p1<-ggplot(data=plotData,aes(x=module_sizes,y=medianRank,label = modColors))+geom_jitter(aes(x=module_sizes,y=medianRank,col=modColors),size=5)+xlab("Module size")+scale_y_reverse()+scale_x_continuous(trans='log10')+ylab("Preservation Median rank")+scale_color_manual(values=modColors)+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Observed median rank statistics")+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))+ geom_text_repel()
+
+p2<-ggplot(data=plotData,aes(x=module_sizes,y=Z_summary,label = modColors))+geom_jitter(aes(x=module_sizes,y=Z_summary,col=modColors),size=5)+xlab("Module size")+scale_y_continuous(breaks=c(0,2,10,20,40,60))+scale_x_continuous(trans='log10')+ylab(TeX("\\textbf{Preservation $\\textit{\\Z_{summary}}$}"))+scale_color_manual(values=modColors)+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle(TeX("\\textbf{Permutation $\\textit{\\Z_{summary}}$ statistics}"))+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))+ geom_text_repel()+geom_hline(yintercept =c(0,2,10),linetype="dashed",col=c("red","blue","darkgreen"))
+
+
+
+cowplot::plot_grid(p1,p2, nrow = 1)
+dev.off()
+
+# Auxiliary convenience variable
+plotData = data.frame(medianRankDensity=mp$preservation$observed[[discovery]][[validation]][, "medianRankDensity.pres"], medianRankConnectivity=mp$preservation$observed[[discovery]][[validation]][, "medianRankConnectivity.pres"],Zdensity=mp$preservation$Z[[discovery]][[validation]][, "Zdensity.pres"], Zconnectivity=mp$preservation$Z[[discovery]][[validation]][, "Zconnectivity.pres"],module_names=modColors,module_sizes=moduleSizes)
+png(file=paste0(path_output_2,"/Figure_S2A_PTB-modulePreservation_details.png"), wi = 12, he = 9,units = 'in', res = 480)
+p1<-ggplot(data=plotData,aes(x=medianRankDensity,y=medianRankConnectivity,label = modColors))+geom_jitter(aes(size=module_sizes,col=modColors))+xlab("Preservation median rank density")+ylab("Preservation median rank conectivity")+scale_color_manual(values=modColors)+scale_x_reverse()+scale_y_reverse()+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Observed median rank statistics")+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))+ geom_text_repel()
+
+p2<-ggplot(data=plotData,aes(x=Zdensity,y=Zconnectivity,label = modColors))+geom_jitter(aes(size=module_sizes,col=modColors))+xlab(TeX("\\textbf{Preservation $\\textit{\\Z_{density}}$}"))+ylab(TeX("\\textbf{Preservation $\\textit{\\Z_{connectivity}}$}"))+scale_color_manual(values=modColors)+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle(TeX("\\textbf{Permutation $\\textit{\\Z_{summary}}$statistics}"))+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))+ geom_text_repel()+geom_hline(yintercept =c(0,2,10),linetype="dashed",col=c("red","blue","darkgreen"))+geom_vline(xintercept =c(0,2,10),linetype="dashed",col=c("red","blue","darkgreen"))
+
+
+
+cowplot::plot_grid(p1,p2, nrow = 1)
+dev.off()
+
+
+```
+
+
+### Association between modules with patient's characteristics and clinical phenotypes on discovery cohort
+
+
+```{r include=FALSE}
+lnames = load(file ="Data/PTB-01-dataInput.RData");
+#The variable lnames contains the names of loaded variables.
+lnames
+
+# Load network data saved in the second part.
+lnames = load(file = paste0("Data/PTB-02-networkConstruction-auto.RData"));
+lnames
+net$MEsOK; MEs_discovery; moduleColors; moduleLabels
+```
+
+
+#### Recalculate module eigene (ME - PC1)
+
+```{r include=FALSE}
+# Set up variables to contain the ME 
+MEs = list();
+varExplained_firstPC <- list()
+# Calculate the ME for discovery and validation
+for (set in 1:nSets){
+  temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
+  temp_ME_order <- orderMEs(temp_ME)
+  MEs[[set]] = list(data = temp_ME_order)
+  temp_PC <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$varExplained)
+  names(temp_PC)<-colnames(temp_ME)
+  varExplained_firstPC[[set]] = list(data = temp_PC)
+}
+
+# re-order the names of module colors validation cohort as the same in the discovery cohorts
+MEs[[2]]$data = MEs[[2]]$data[,names(MEs[[1]]$data)]
+
+
+# Remove all "ME" from the names of MEs
+colnames(MEs[[1]]$data)<-gsub("ME","",colnames(MEs[[1]]$data))
+colnames(MEs[[2]]$data)<-gsub("ME","",colnames(MEs[[2]]$data))
+
+## plot module hierarchical clustering
+png(file = paste0(path_output_2,"/PTB-Module_hierarchical_clustering.png"),
+    wi = 7, he = 7,units = 'in', res = 480)
+par(cex = 0.9)
+plotEigengeneNetworks(MEs[[1]]$data, "", marDendro = c(0,3.5,1,4.5), marHeatmap = c(4,4,0,2),
+                      cex.lab = 0.8, xLabelsAngle= 90, colorLabels=F)
+dev.off()
+
+varExplained_firstPC[[1]]$data
+```
+
+#### The association between Eigengene vs log2_CT in each cohort
+
+```{r eval=FALSE, include=FALSE}
+p<-list()
+for (set in 1:nSets){
+moduleNames<-colnames(MEs[[set]]$data)
+for(i in moduleNames){
+  dat<-data.frame(x=MEs[[set]]$data[,i],log2_CT=traitData[[set]]$data$log2_CT)
+  p[[i]]<-ggplot(data=dat,aes(x=x,y=log2_CT))+geom_point(col=gsub("ME","",i))+geom_smooth(method = "gam", 
+              formula = y ~ s(x))+xlab(i)+theme_bw()
+}
+png(file=paste0(path_output_2,"/Association_between_Eigengene_vs_log2_CT_",shortLabels[set],".png"),
+    res=400, units = 'in', width = 30, height =20)
+cowplot::plot_grid(plotlist = p, nrow = 4)+ggtitle(paste("Association between Eigengenes vs. log2 CT \n"))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+}
+```
+
+
+
+* Of note, we observed that except for the brown modules we see a little bit evidence of non-linearity other than that we observed a linear trend.  For the sake of generality, we will use the linear trend for all the subsequent analysis but for the selection for the best predictors for CT value we allow to select it based on the non-linear trend.
+
+#### Computing the Module-Trait associations
+
+```{r echo=FALSE}
+# We color code each association by the correlation value
+moduleTraitCor<-moduleTraitCor.scaled<-moduleTraitPvalue<-moduleTraitPvalue.adj<-list()
+
+for(set in 1:nSets){
+  datTraits<-traitData[[set]]$data %>% select(-Gender)
+  moduleTraitCor[[set]] = cor(MEs[[set]]$data, datTraits, use = "p", method = "spearman");
+  moduleTraitCor.scaled[[set]]<-moduleTraitCor[[set]]
+  moduleTraitPvalue[[set]] = corPvalueStudent(moduleTraitCor[[set]], nSamples[[set]]);
+  
+  # For patient characteristics: Age, bmi, Diabetes, Treatment_sensitive, we use linear regression to detect the association between eignegene vs these characteristics.
+
+characteristics<-c("Age", "bmi","Diabetes","Treatment_sensitive")
+for(i in 1:length(characteristics)){
+  y<-datTraits[,characteristics[i]]
+  moduleTraitCor[[set]][,characteristics[i]]<-apply(MEs[[set]]$data,2,function(x){summary(lm(x~y))$coefficients[2,"Estimate"]})
+  moduleTraitPvalue[[set]][,characteristics[i]]<-apply(MEs[[set]]$data,2,function(x){summary(lm(x~y))$coefficients[2,"Pr(>|t|)"]})
+}
+
+# For the patient outcomes: Ct value, lung proportional CXR and Cavity, we use the regression model to modeling the association between trait and module
+# Linear trend for Eigenegene vs Ct value
+y<-datTraits[,"log2_CT"]
+moduleTraitCor[[set]][,"log2_CT"]<-apply(MEs[[set]]$data,2,function(x){summary(lm(y~x))$coefficients[2,"Estimate"]})
+moduleTraitPvalue[[set]][,"log2_CT"]<-apply(MEs[[set]]$data,2,function(x){summary(lm(x~y))$coefficients[2,"Pr(>|t|)"]})
+
+y<-datTraits[,"Cavity"]
+moduleTraitCor[[set]][,"Cavity"]<-apply(MEs[[set]]$data,2,function(x){summary(glm(y~x,family="binomial"))$coefficients[2,"Estimate"]})
+moduleTraitPvalue[[set]][,"Cavity"]<-apply(MEs[[set]]$data,2,function(x){summary(glm(y~x,family="binomial"))$coefficients[2,"Pr(>|z|)"]})
+
+
+N<-length(datTraits$Lung_proportion)-sum(is.na(datTraits$Lung_proportion))
+y<-(datTraits$Lung_proportion/100*(N - 1) + 0.5)/N 
+moduleTraitCor[[set]][,"Lung_proportion"]<-apply(MEs[[set]]$data,2,function(x){summary(betareg::betareg(y~x))$coefficients$mean[2,"Estimate"]})
+moduleTraitPvalue[[set]][,"Lung_proportion"]<-apply(MEs[[set]]$data,2,function(x){summary(betareg::betareg(y~x))$coefficients$mean[2,"Pr(>|z|)"]})
+
+moduleTraitCor.scaled[[set]]<-apply(moduleTraitCor[[set]],2,function(x){x/sd(x)})
+## We adjusted p.value for each trait for all the modules
+moduleTraitPvalue.adj[[set]]<-apply(moduleTraitPvalue[[set]],2,function(x){p.adjust(x,method="BH")})
+ 
+}
+
+# Convert log.OR to OR for Cavity phenotype.
+moduleTraitCor[[1]][,"Cavity"]<-round(exp(moduleTraitCor[[1]][,"Cavity"]),3)
+moduleTraitCor[[2]][,"Cavity"]<-round(exp(moduleTraitCor[[2]][,"Cavity"]),3)
+
+
+
+
+save(MEs,moduleTraitPvalue,moduleTraitPvalue.adj,moduleTraitCor,moduleTraitCor.scaled,file="Data/Module_discovery.Rdata")
+```
+
+
+## Plot P-value of modules vs complex clinical traits in discovery and validation
+
+```{r}
+load(file="Data/Module_discovery.Rdata")
+
+traits<-c("log2_CT", "Cavity", "Lung_proportion")
+# modules<-str_replace_all(rownames(moduleTraitPvalue[[1]]),"ME","")
+require("ggrepel")
+for( i in 1:length(traits)){
+  
+dat_tmp<-data.frame("p.value_Discovery"=log2(moduleTraitPvalue[[1]][,traits[i]]),
+                    "p.value_Validation"=log2(moduleTraitPvalue[[2]][,traits[i]]),
+                    modules=modules)
+
+dat_tmp$modules <- factor(dat_tmp$modules) 
+col_value<-levels(dat_tmp$modules)
+
+
+png(file=paste0(path_output_2,"/PTB-",traits[i],"FDR_Discovery_vs_Validation.png"),res=500, units = 'in', width = 7.5, height =7.5)
+ggplot(data=dat_tmp,aes(x=`p.value_Discovery`,y=`p.value_Validation`,label = modules))+geom_jitter(aes(x=`FDR_Discovery`,y=`FDR_Validation`,col=modules),size=5)+xlab(TeX("$\\log_{10}$\\textit{(FDR)} discovery"))+scale_y_reverse() +scale_x_reverse() +ylab(TeX("$\\log_{10}$\\textit{(FDR)} validation"))+scale_color_manual(values=col_value)+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text( colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12)) + geom_text_repel()+geom_vline(xintercept=log10(0.1),linetype="dashed",col="red")+geom_hline(yintercept = log10(0.1),linetype="dashed",col="red")+coord_cartesian(ylim=c(0,-4),xlim=c(0,-4))
+dev.off()
+
+}
+```
+
+##### Module-trait association analysis for each cohort 
+```{r}
+# Load network data saved in the second part.
+lnames = load(file = paste0("Data/PTB-02-networkConstruction-auto.RData"));
+lnames
+net$MEsOK; MEs_discovery; moduleColors; moduleLabels
+
+### Recalculate module eigene (ME - PC1)
+# Set up variables to contain the ME 
+MEs = list();
+varExplained_firstPC <- list()
+# Calculate the ME for discovery and validation
+for (set in 1:nSets){
+  temp_ME <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$eigengenes)
+  temp_ME_order <- orderMEs(temp_ME)
+  MEs[[set]] = list(data = temp_ME_order)
+  temp_PC <- as.data.frame(moduleEigengenes(multiExpr[[set]]$data, moduleColors)$varExplained)
+  names(temp_PC)<-colnames(temp_ME)
+  varExplained_firstPC[[set]] = list(data = temp_PC)
+}
+
+# re-order the names of module colors discovery cohort as the same in the validation cohorts
+MEs[[2]]$data = MEs[[2]]$data[,names(MEs[[1]]$data)]
+# Remove all "ME" from the names of MEs
+colnames(MEs[[1]]$data)<-gsub("ME","",colnames(MEs[[1]]$data))
+colnames(MEs[[2]]$data)<-gsub("ME","",colnames(MEs[[2]]$data))
+
+# varExplained_firstPC[[1]]$data
+
+ME_dat<-MEs[[1]]$data
+# 1-Pearson correlation distance
+
+cor_mat <- cor(ME_dat,
+               use='pairwise.complete.obs',
+               method = "spearman")
+dist_matrix <- as.dist(1-cor_mat)
+# dist_matrix <- dist(ME_dat, method="euclidean")
+
+hc <- hclust(dist_matrix, method="ward.D2")
+hcd <- as.dendrogram(hc)
+## plot module hierarchical clustering
+png(file = paste0(path_output_2,"/PTB-Module_hierarchical_clustering_3.png"),
+    wi = 15, he = 10,units = 'in', res = 480)
+p1<-ggdendrogram(hc, rotate =T, theme_dendro = TRUE,size = 3)+
+  ylab("")+xlab("") +
+  theme_void()+ 
+  theme(legend.position="bottom")+
+  theme(panel.grid.minor = element_blank(),axis.title.x = element_blank(),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_text(face="bold",colour="black", size=13),
+        axis.text.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12)) + 
+  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))
+ 
+# pval matrix
+col=c("#001164", 'white', "#FF681E") #"#A50026"
+#col=c("#001164", 'white', "#A50026") #
+cor.pval.test <- function(x1, x2, ...) {
+  r <- ncol(x1)
+  n <- ncol(x2)
+  p.mat<- matrix(NA, r, n)
+  for (i in 1:r) {
+    for (j in 1:n) {
+      tmp <- cor.test(x1[, i], x2[, j], ...)
+      p.mat[i, j] <- tmp$p.value
+    }
+  }
+  rownames(p.mat) <-  colnames(x1)
+  colnames(p.mat) <- colnames(x2)
+  return(p.mat)
+}
+
+
+# Reorder the module base on hierarchical_clustering
+module_order<-rev(hc$labels[hc$order])
+ME_dat<-ME_dat[,module_order]
+## Plot the correlation between top-hit metabolites based on the cluster
+  # Plot2 : metabolites pairwise
+  # Mets vs each-other
+cor_method="spearman"
+mat2 <- cor(ME_dat,
+            use='pairwise.complete.obs', method = cor_method)
+ 
+# matrix of the p-value of the correlation
+p.mat2 <- cor.pval.test(ME_dat, ME_dat,
+                        method=cor_method, use='pairwise.complete.obs')
+p2 <-ggcorrplot(mat2,
+               p.mat = p.mat2, 
+               colors = col,hc.order = FALSE,
+               type = 'full',
+               outline.color = 'black',lab = T, lab_size = 3,insig="blank",
+               show.diag = T) +
+    scale_fill_gradient2(low=col[1], mid= col[2], high=col[3], na.value = 'gray50', limits=c(-1,1))+
+    labs(fill="Corr")+
+    theme(axis.text.x = element_blank(),axis.text.y = element_text(face="bold", colour="black", size=12),legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12))+theme(legend.position="right")
+cowplot::plot_grid(p1,p2, nrow = 1,rel_widths = c(1, 2))
+dev.off()
+
+```
+
+
+```{r Figure 1A, echo=FALSE}
+load(file="Data/Module_discovery.Rdata")
+## Module-trait association analysis
+sizeGrWindow(10,6)
+textMatrix<-list()
+xLabels = c("Gene-Xpert \n Ct value", "Cavity","Lung proportion\n damage")
+
+png(file=paste0(path_output_2,"/Figure 1A-ModuleTraitRelationships-PTB.png"),
+    wi = 8, he = 8,units = 'in', res = 550)
+par(mfrow = c(1,2),mar = c(5,6,2.5,1))
+for(set in 1:nSets){
+# datTraits<-traitData[[set]]$data %>% dplyr::select(c("log2_CT", "Cavity", "Lung_proportion"))
+# Will display correlations and their p-values
+textMatrix[[set]] =  paste(signif(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 2), "\n(",
+                    signif(moduleTraitPvalue[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")], 1), ")", sep = "");
+dim(textMatrix[[set]]) = dim(moduleTraitCor[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")])
+# png(file=paste0(path_output_2,"/Figure 1A-ModuleTraitRelationships-PTB_",shortLabels[set],".png"),
+#     units="px", width=1800, height=1800, res=300)
+# par(mar = c(6, 8.5, 3, 3));
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor.scaled[[set]][module_order,c("log2_CT", "Cavity", "Lung_proportion")],
+               xLabels = xLabels,
+               yLabels = module_order,
+               ySymbols = module_order,
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix[[set]],
+               setStdMargins = FALSE,
+               cex.text = 0.7,
+               zlim = c(-3,3),
+               main = paste0(shortLabels[set]," cohort"))
+
+}
+dev.off()
+```
+
+
+###  Gene relationship to clinical trait-CT Xpert value and important modules: Gene Significance and Module Membership on pooled data
+
+```{r}
+#=====================================================================================
+# Define variable weight containing the weight column of datTrait
+log2_CT = as.data.frame(clinical_RNA$log2_CT);
+names(log2_CT) = "log2_CT"
+clinical_RNA$Cavity_bi<-ifelse(clinical_RNA$Cavity=="Yes",1,0)
+# clinical_RNA$Lung_proportion_scaled<-pmin(pmax(clinical_RNA$Lung_proportion/100,1e-5),1-1e-5)
+N<-length(clinical_RNA$Lung_proportion)-sum(is.na(clinical_RNA$Lung_proportion))
+clinical_RNA$Lung_proportion_scaled<-(clinical_RNA$Lung_proportion/100*(N - 1) + 0.5)/N 
+
+# names (colors) of the modules
+# modNames = gsub("ME","",colnames(MEs[[1]]$data))
+modNames = colnames(MEs[[1]]$data)
+# recalculate the ME modules for pooled data.
+ME_pooled <- as.data.frame(moduleEigengenes(datExpr, moduleColors)$eigengenes)
+colnames(ME_pooled)<-gsub("ME","",colnames(ME_pooled)) 
+ME_order <- ME_pooled[,modNames]
+
+geneModuleMembership <- sapply(1:ncol(ME_order),function(i){apply(datExpr,2,function(x){summary(lm(ME_order[,i]~x))$coefficients[2,"Estimate"]})}) %>% as.data.frame()
+names(geneModuleMembership) = paste("MM", modNames, sep="");
+
+
+geneTraitAssociation_log2_CT = sapply(1:ncol(datExpr),function(i){summary(lm(clinical_RNA$log2_CT~datExpr[,i]))$coefficients[2,"Estimate"]}) %>% as.data.frame()
+names(geneTraitAssociation_log2_CT) <- paste("GA.", "log2_CT", sep="");
+plotModuleSignificance(geneTraitAssociation_log2_CT[,1],moduleColors)
+
+geneTraitSignificant_log2_CT = sapply(1:ncol(datExpr),function(i){summary(lm(clinical_RNA$log2_CT~datExpr[,i]))$coefficients[2,"Pr(>|t|)"]}) %>% as.data.frame()
+names(geneTraitSignificant_log2_CT) <- paste("GS.", "log2_CT", sep="");
+plotModuleSignificance(geneTraitSignificant_log2_CT[,1],moduleColors)
+save(geneModuleMembership,geneTraitAssociation_log2_CT,geneTraitSignificant_log2_CT,file="Data/Gene Significance and Module Membership_log2_CT.Rdata")
+
+geneTraitAssociation_Cavity = sapply(1:ncol(datExpr),function(i){summary(glm(clinical_RNA$Cavity_bi~datExpr[,i],family="binomial"))$coefficients[2,"Estimate"]}) %>% as.data.frame()
+names(geneTraitAssociation_Cavity) <- paste("GA.", "Cavity", sep="");
+geneTraitSignificant_Cavity = sapply(1:ncol(datExpr),function(i){summary(glm(clinical_RNA$Cavity_bi~datExpr[,i],family="binomial"))$coefficients[2,"Pr(>|z|)"]}) %>% as.data.frame()
+names(geneTraitSignificant_Cavity) <- paste("GS.", "Cavity", sep="");
+plotModuleSignificance(geneTraitAssociation_Cavity[,1],moduleColors)
+save(geneModuleMembership,geneTraitAssociation_Cavity,geneTraitSignificant_Cavity,file="Data/Gene Significance and Module Membership_Cavity.Rdata")
+
+
+geneTraitAssociation_Lung_proportion = sapply(1:ncol(datExpr),function(i){unname(betareg::betareg(clinical_RNA$Lung_proportion_scaled~datExpr[,i])$coefficients$mean[2])}) %>% as.data.frame()
+names(geneTraitAssociation_Lung_proportion) <- paste("GA.", "Lung_proportion", sep="");
+geneTraitSignificant_Lung_proportion = sapply(1:ncol(datExpr),function(i){unname(summary(betareg::betareg(clinical_RNA$Lung_proportion_scaled~datExpr[,i]))$coefficients$mean[2,"Pr(>|z|)"])}) %>% as.data.frame()
+names(geneTraitSignificant_Lung_proportion) <- paste("GS.", "Lung_proportion", sep="");
+
+plotModuleSignificance(geneTraitAssociation_Lung_proportion[,1],moduleColors)
+save(geneModuleMembership,geneTraitAssociation_Lung_proportion,geneTraitSignificant_Lung_proportion,file="Data/Gene Significance and Module Membership_Lung_proportion.Rdata")
+geneTraitAssociation<-data.frame(geneTraitAssociation_log2_CT,geneTraitSignificant_log2_CT,
+                                 geneTraitAssociation_Cavity,geneTraitSignificant_Cavity,
+                                 geneTraitAssociation_Lung_proportion,geneTraitSignificant_Lung_proportion)
+#save(geneModuleMembership,geneTraitAssociation,file=paste0(path_output,"/Gene Significance and Module Membership_clinical_trait.Rdata"))
+save(geneModuleMembership,geneTraitAssociation,file="Data/Gene Significance and Module Membership_clinical_trait.Rdata")
+
+```
+
+
+### Intramodular analysis: identifying genes with high GA and MM with respect to bacterial burden
+**Of note, In the following, we use the term upregulate or downregulate we mean the trend bwteen eignegene of each module vs the phenotyes (clinical trait) **
+
+##### Up-regulated modules with respect to bacterial burden.
+
+```{r}
+load(file="Data/Module_discovery.Rdata")
+load(file="Data/Gene Significance and Module Membership_log2_CT.Rdata")
+anno_coding <- subset(anno,class=="protein_coding")
+# We only focus on the significant modules, with FDR<0.1 in both discovery and validation cohort
+# Combine the p value from modules-traits association from two cohorts
+moduleTraitPvalue_1<-as.data.frame(moduleTraitPvalue.adj[[1]])
+moduleTraitPvalue_2<-as.data.frame(moduleTraitPvalue.adj[[2]])
+colnames(moduleTraitPvalue_1)<-paste0(colnames(moduleTraitPvalue_1),"_discovery")
+colnames(moduleTraitPvalue_2)<-paste0(colnames(moduleTraitPvalue_2),"_validation")
+moduleTraitPvalue_wide<-cbind(moduleTraitPvalue_1,moduleTraitPvalue_2)
+# Combine the correlation from modules-traits association from two cohorts
+moduleTraitCor_1<-as.data.frame(moduleTraitCor[[1]])
+moduleTraitCor_2<-as.data.frame(moduleTraitCor[[2]])
+colnames(moduleTraitCor_1)<-paste0(colnames(moduleTraitCor_1),"_discovery")
+colnames(moduleTraitCor_2)<-paste0(colnames(moduleTraitCor_2),"_validation")
+moduleTraitCor_wide<-cbind(moduleTraitCor_1,moduleTraitCor_2)
+```
+
+
+```{r Figure 3A,include=FALSE}
+selected_modules<-moduleTraitPvalue_wide%>% filter(log2_CT_discovery<0.1&log2_CT_validation<0.1) %>% rownames()
+upregulated_modules<-selected_modules
+p<-list()
+output_hubs<-data.frame()
+modNames = names(MEs[[1]]$data)
+for(i in 1:length(upregulated_modules)){
+module<-upregulated_modules[i]
+modNames<-modNames
+column<-match(module,modNames);
+moduleGenes<-(moduleColors==module);
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=-geneTraitAssociation_log2_CT[moduleGenes,1],
+                         GS=geneTraitSignificant_log2_CT[moduleGenes,1])
+
+# Identify the hub genes as the genes above the 5% and 95% quantiles for two directional selection
+MM_cutoff <- quantile(selected_module$MM,prob=c(0.025,0.975))
+GA_cutoff <- quantile(selected_module$GA,prob=c(0.025,0.975))
+
+GAMM <- selected_module %>% mutate(gene=rownames(geneModuleMembership)[moduleGenes],
+                                module=module)
+
+selected_genes_module <- subset(GAMM,((MM < MM_cutoff[1])|(MM > MM_cutoff[2]))& ((GA < GA_cutoff[1])|(GA > GA_cutoff[2]))) %>% filter(gene %in% anno_coding$gene_symbol)
+#selected_genes_module %<>% mutate(TCR_pathway=ifelse(gene%in%c("CD3G","MAPK14","PLCG1","ZAP70"),"TCR pathway","others"))
+
+
+# dim(selected_genes_module)
+# save(GAMM,selected_genes_module,file="Thuowng_proposal_module_brown.Rdata")
+png(file=paste0(path_output_2,"/Upregulation_Module_membership_bacterial_burden.png"),
+    res=400, units = 'in', width = 7.5, height =7.5)
+ggplot(data=GAMM,aes(x=MM,y=GA))+geom_point(alpha=0.1,col="#313695",size=3)+theme_bw()+stat_poly_line(se=F) +
+  xlab("Module Membership (PC1)")+ylab("Association between genes with bacterial load
+")+geom_hline(yintercept=GA_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_vline(xintercept=MM_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_point(data=selected_genes_module,aes(x=MM,y=GA),col="#313695",size=1.5,alpha=0.9)+geom_text_repel(data=selected_genes_module,aes(x=MM,y=GA,label=gene),size=3.5,col="#A50026")+stat_poly_line(se=T) +
+  stat_cor(size = 7,cor.coef.name = "r")+theme_bw()+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+# 
+output_hubs<-rbind(output_hubs,selected_genes_module)
+dev.off()
+}
+
+# png(file=paste0(path_output,"/Upregulation_Module_membership_bacterial_burden.png"),
+#     res=400, units = 'in', width = 7.5, height =7.5)
+# ggplot(data=GAMM,aes(x=MM,y=GA))+geom_point(alpha=0.2,col="#313695",size=3)+theme_bw()+stat_poly_line(se=F) +
+#   xlab("Module Membership (PC1)")+ylab("Association between genes with bacterial load
+# ")+geom_hline(yintercept=GA_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_vline(xintercept=MM_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_point(data=selected_genes_module,aes(x=MM,y=GA,col=TCR_pathway),alpha=0.9)+geom_text_repel(data=subset(selected_genes_module,TCR_pathway=="TCR pathway"|gene=="CNIH4"),aes(x=MM,y=GA,label=gene),size=3.5,col="#00441b",arrow = T)+scale_color_manual(values=c("#313695", "#A50026"))+stat_poly_line(se=T) +
+#   stat_cor(size = 7,cor.coef.name = "r")+theme_bw()+theme(plot.title = element_text(size = 15),
+#         legend.position = "none",
+#         axis.text = element_text(size = 15),
+#         axis.text.x=element_text(color="black",size=15),
+#         axis.title.x = element_text(size = 15,color="black",face="bold"),
+#         axis.text.y=element_text(color="black",size=15),
+#         axis.title.y = element_text(size = 15,color="black",face="bold"),
+#         legend.text = element_text(size = 15),
+#         legend.title = element_text( colour="black", size=12),
+#         legend.key = element_rect(colour = NA),
+#         strip.text=element_text(face = "bold",size=12))
+# 
+# 
+# dev.off()
+save(output_hubs,file="Data/Upregulation_Module_membership_bacterial_burden_profile.Rdata")
+
+```
+
+##### Identify hub genes with respect to bacterial burden
+
+```{r include=FALSE}
+## Merge the list of hub genes.
+## We only focus on annotated genes. Gene without annotation will be moved out the analysis for easy interpretation and clinical implication
+## We only chose the significant signal and the top five predicted gene per module based on R_adj_2
+
+f0<-mgcv::gam(log2_CT~1,data=clinical_RNA,family="gaussian",method="REML")
+Rsq_adj<-df<-p.value<-c()
+gene_hub<-output_hubs$gene
+for(i in gene_hub){
+  f<-formula(paste0("~ s(",i,")"))
+  sum_f<-summary(update(f0,f))
+  Rsq_adj<-c(Rsq_adj,unname(sum_f$r.sq))
+  p.value<-c(p.value,unname(sum_f$s.table[,"p-value"]))
+  df<-c(df,unname(sum_f$s.table[,"edf"]))
+}
+output_hubs %<>% mutate(Rsq_adj=Rsq_adj,
+                        df=df,
+                        p.value=p.value,
+                        module=factor(module,levels = c(upregulated_modules))) %>% 
+                 arrange(module,desc(Rsq_adj))
+write.csv(output_hubs, file = paste0(path_output,"/Modules-Hubgenes_CT_value.csv"),
+          row.names = FALSE, quote = FALSE)
+```
+
+
+#### Intramodular analysis: identifying genes with high GA and MM with respect to Chest_X_ray_cavity
+**Of note, In the following, we use the term upregulate or downregulate we mean the trend bwteen eignegene of each module vs the phenotyes (clinical trait) **
+
+##### Up-regulated modules with respect to Chest_X_ray_cavity.
+
+```{r}
+selected_modules<-moduleTraitPvalue_wide%>% filter(Cavity_discovery <0.1&Cavity_validation<0.1) %>% rownames()
+selected_modules<-gsub("ME","",selected_modules)
+#Up-regulated modules with respect to bacterial burden.
+downregulated_modules<-as.data.frame(moduleTraitCor_wide[selected_modules,]) %>% filter(Cavity_discovery <1 & Cavity_validation<1 )%>% rownames()
+upregulated_modules<-as.data.frame(moduleTraitCor_wide[selected_modules,]) %>% filter(Cavity_discovery >1 & Cavity_validation>1)%>% rownames()
+
+```
+
+
+```{r include=FALSE}
+library(ggpmisc)
+p<-list()
+output_hubs<-data.frame()
+for(i in 1:length(upregulated_modules)){
+module<-upregulated_modules[i] 
+column<-match(module,modNames);
+moduleGenes<-(moduleColors==module);
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation_Cavity[moduleGenes,1])
+
+# Identify the hub genes as the genes above the 5% and 95% quantiles for two directional selection
+MM_cutoff <- quantile(selected_module$MM,prob=c(0.05,0.95))
+GA_cutoff <- quantile(selected_module$GA,prob=c(0.05,0.95))
+
+GAMM <- selected_module %>% mutate(gene=rownames(geneModuleMembership)[moduleGenes],
+                                module=module)
+
+selected_genes_module <- subset(GAMM,((MM < MM_cutoff[1])|(MM > MM_cutoff[2]))& ((GA < GA_cutoff[1])|(GA > GA_cutoff[2]))) %>% filter(gene %in% anno_coding$gene_symbol)
+# dim(selected_genes_module)
+
+p[[i]]<-ggplot(data=GAMM,aes(x=MM,y=GA))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=F) +
+  stat_poly_eq()+ xlab(paste("Module Membership in",module,"module"))+ylab("Gene Association for Cavity")+geom_hline(yintercept=GA_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_vline(xintercept=MM_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_point(data=selected_genes_module,aes(x=MM,y=GA),col=module,alpha=0.9)+geom_text_repel(data=selected_genes_module,aes(x=MM,y=GA,label=gene),size=3,col="blue")
+
+output_hubs<-rbind(output_hubs,selected_genes_module)
+}
+
+png(file=paste0(path_output,"/Upregulation_Module_membership_Cavity.png"),
+    res=400, units = 'in', width = 7 , height =7)
+cowplot::plot_grid(plotlist = p, nrow = 1)+ggtitle(paste("Module membership vs. gene association\n"))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+
+
+```
+
+##### Down-regulated modules
+
+```{r eval=FALSE, include=FALSE}
+library(ggpmisc)
+p<-list()
+for(i in 1:length(downregulated_modules)){
+module<-downregulated_modules[i] 
+column<-match(module,modNames);
+moduleGenes<-(moduleColors==module);
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation_Cavity[moduleGenes,1])
+
+# Identify the hub genes as the genes above the 5% and 95% quantiles for two directional selection
+MM_cutoff <- quantile(selected_module$MM,prob=c(0.05,0.95))
+GA_cutoff <- quantile(selected_module$GA,prob=c(0.05,0.95))
+
+GAMM <- selected_module %>% mutate(gene=rownames(geneModuleMembership)[moduleGenes],
+                                module=module)
+
+selected_genes_module <- subset(GAMM,((MM < MM_cutoff[1])|(MM > MM_cutoff[2]))& ((GA < GA_cutoff[1])|(GA > GA_cutoff[2]))) %>% filter(gene %in% anno_coding$gene_symbol)
+output_hubs<-rbind(output_hubs,selected_genes_module)
+
+p[[i]]<-ggplot(data=selected_module,aes(x=MM,y=GA))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=F) +
+  stat_poly_eq()+ xlab(paste("Module Membership in",module,"module"))+ylab("Gene Association for Cavity")+geom_hline(yintercept=GA_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_vline(xintercept=MM_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_point(data=selected_genes_module,aes(x=MM,y=GA),col=module,alpha=0.9)+geom_text_repel(data=selected_genes_module,aes(x=MM,y=GA,label=gene),size=3,col="blue")
+
+}
+
+png(file=paste0(path_output,"/Downregulation_Module_membership_Cavity.png"),
+    res=400, units = 'in', width = 7.5, height =7.5)
+cowplot::plot_grid(plotlist = p, nrow = 1)+ggtitle(paste("Module membership vs. gene association\n"))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+```
+
+##### Identify hub genes with respect to Cavity
+
+```{r include=FALSE}
+## Merge the list of hub genes.
+## We only focus on annotated genes. Gene without annotation will be moved out the analysis for easy interpretation and clinical implication
+## We only chose the significant signal and the top five predicted gene per module based on R_adj_2
+clinical_RNA$Cavity_bi<-ifelse(clinical_RNA$Cavity=="Y",1,0)
+f0<-mgcv::gam(Cavity_bi~1,data=clinical_RNA,family="binomial",method="REML")
+Rsq_adj<-df<-p.value<-c()
+gene_hub<-output_hubs$gene
+for(i in gene_hub){
+  f<-formula(paste0("~ s(",i,")"))
+  sum_f<-summary(update(f0,f))
+  Rsq_adj<-c(Rsq_adj,unname(sum_f$r.sq))
+  p.value<-c(p.value,unname(sum_f$s.table[,"p-value"]))
+  df<-c(df,unname(sum_f$s.table[,"edf"]))
+}
+output_hubs %<>% mutate(Rsq_adj=Rsq_adj,
+                        df=df,
+                        p.value=p.value,
+                        module=factor(module,levels = c(upregulated_modules,downregulated_modules))) %>% 
+                 arrange(module,desc(Rsq_adj))
+write.csv(output_hubs, file = paste0(path_output,"/Modules-Hubgenes_Cavity.csv"),
+          row.names = FALSE, quote = FALSE)
+```
+
+
+
+
+
+#### Intramodular analysis: identifying genes with high GA and MM with respect to lung dammage proportion
+**Of note, In the following, we use the term upregulate or downregulate we mean the trend bwteen eignegene of each module vs the phenotyes (clinical trait) **
+
+##### Up-regulated modules with respect to lung dammage proportion.
+
+```{r}
+selected_modules<-moduleTraitPvalue_wide%>% filter(Lung_proportion_discovery <0.1&Lung_proportion_validation<0.1) %>% rownames()
+selected_modules<-gsub("ME","",selected_modules)
+#Up-regulated modules with respect to bacterial burden.
+downregulated_modules<-as.data.frame(moduleTraitCor_wide[selected_modules,]) %>% filter(Lung_proportion_discovery <0 & Lung_proportion_validation<0 )%>% rownames()
+
+upregulated_modules <-as.data.frame(moduleTraitCor_wide[selected_modules,]) %>% filter(Lung_proportion_discovery >0 & Lung_proportion_validation>0)%>% rownames()
+```
+
+
+```{r include=FALSE}
+library(ggpmisc)
+p<-list()
+output_hubs<-data.frame()
+for(i in 1:length(upregulated_modules)){
+module<-upregulated_modules[i] 
+column<-match(module,modNames);
+moduleGenes<-(moduleColors==module);
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation_Lung_proportion[moduleGenes,1])
+
+# Identify the hub genes as the genes above the 5% and 95% quantiles for two directional selection
+MM_cutoff <- quantile(selected_module$MM,prob=c(0.05,0.95))
+GA_cutoff <- quantile(selected_module$GA,prob=c(0.05,0.95))
+
+GAMM <- selected_module %>% mutate(gene=rownames(geneModuleMembership)[moduleGenes],
+                                module=module)
+
+selected_genes_module <- subset(GAMM,((MM < MM_cutoff[1])|(MM > MM_cutoff[2]))& ((GA < GA_cutoff[1])|(GA > GA_cutoff[2]))) %>% filter(gene %in% anno_coding$gene_symbol)
+# dim(selected_genes_module)
+
+p[[i]]<-ggplot(data=selected_module,aes(x=MM,y=GA))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=F) +
+  stat_poly_eq()+ xlab(paste("Module Membership in",module,"module"))+ylab("Gene Association for Lung dammage proportion CXR")+geom_hline(yintercept=GA_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_vline(xintercept=MM_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_point(data=selected_genes_module,aes(x=MM,y=GA),col=module,alpha=0.9)+geom_text_repel(data=selected_genes_module,aes(x=MM,y=GA,label=gene),size=3,col="blue")
+output_hubs<-rbind(output_hubs,selected_genes_module)
+}
+
+png(file=paste0(path_output,"/Upregulation_Module_membership_Lung_proportion.png"),
+    res=400, units = 'in', width = 7, height =7)
+cowplot::plot_grid(plotlist = p, nrow = 1)+ggtitle(paste("Module membership vs. gene association\n"))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+
+
+```
+
+##### Down-regulated modules
+
+```{r eval=FALSE, include=FALSE}
+library(ggpmisc)
+p<-list()
+for(i in 1:length(downregulated_modules)){
+module<-downregulated_modules[i] 
+column<-match(module,modNames);
+moduleGenes<-(moduleColors==module);
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation_Lung_proportion[moduleGenes,1])
+
+# Identify the hub genes as the genes above the 5% and 95% quantiles for two directional selection
+MM_cutoff <- quantile(selected_module$MM,prob=c(0.05,0.95))
+GA_cutoff <- quantile(selected_module$GA,prob=c(0.05,0.95))
+
+GAMM <- selected_module %>% mutate(gene=rownames(geneModuleMembership)[moduleGenes],
+                                module=module)
+
+selected_genes_module <- subset(GAMM,((MM < MM_cutoff[1])|(MM > MM_cutoff[2]))& ((GA < GA_cutoff[1])|(GA > GA_cutoff[2]))) %>% filter(gene %in% anno_coding$gene_symbol)
+output_hubs<-rbind(output_hubs,selected_genes_module)
+
+p[[i]]<-ggplot(data=selected_module,aes(x=MM,y=GA))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=F) +
+  stat_poly_eq()+ xlab(paste("Module Membership in",module,"module"))+ylab("Gene Association for Lung dammage proportion CXR")+geom_hline(yintercept=GA_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_vline(xintercept=MM_cutoff,col="red",alpha=0.5,linetype="dashed")+geom_point(data=selected_genes_module,aes(x=MM,y=GA),col=module,alpha=0.9)+geom_text_repel(data=selected_genes_module,aes(x=MM,y=GA,label=gene),size=3,col="blue")
+
+}
+
+png(file=paste0(path_output,"/Downregulation_Module_membership_Lung_proportion.png"),
+    res=400, units = 'in', width = 14, height =7)
+cowplot::plot_grid(plotlist = p, nrow = 1)+ggtitle(paste("Module membership vs. gene association\n"))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+```
+
+##### Identify hub genes with respect to Lung proportion CXR check here
+
+```{r include=FALSE}
+## Merge the list of hub genes.
+## We only focus on annotated genes. Gene without annotation will be moved out the analysis for easy interpretation and clinical implication
+## We only chose the significant signal and the top five predicted gene per module based on R_adj_2
+clinical_RNA$Lung_proportion_scaled<-pmin(pmax(clinical_RNA$Lung_proportion/100,1e-5),1-1e-5)
+f0<-betareg::betareg(Lung_proportion_scaled~1,data=clinical_RNA)
+Rsq_adj<-df<-p.value<-c()
+gene_hub<-output_hubs$gene
+
+for(i in 1:length(gene_hub)){
+  dat_tmp<-clinical_RNA %>% select(Lung_proportion_scaled,gene_hub[i])
+  f<-betareg::betareg(Lung_proportion_scaled~.,data=dat_tmp)
+  sum_f<-summary(f)
+  Rsq_adj<-c(Rsq_adj,f$pseudo.r.squared)
+  p.value<-c(p.value,sum_f$coefficients$mean[2,"Pr(>|z|)"])
+}
+output_hubs %<>% mutate(Rsq_adj=Rsq_adj,
+                        df=df,
+                        p.value=p.value,
+                        module=factor(module,levels = c(upregulated_modules,downregulated_modules))) %>% 
+                 arrange(module,desc(Rsq_adj))
+write.csv(output_hubs, file = paste0(path_output,"/Modules-Hubgenes_Lung_proportion.csv"),
+          row.names = FALSE, quote = FALSE)
+```
+
+
+# Pathway analysis - network analysis - hubgene 
+
+## Active-subnetwork-oriented Enrichment Analysis for modules associated with bacterial burden (log2_CT)
+### Upregulation module
+#### Module brown
+
+```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(pathfindR)
+
+module<-"brown"
+phenotype<-"log2_CT"
+direction<-"upregulation"
+moduleGenes<-(moduleColors==module);
+
+TraitAssociation<-paste("GA",phenotype,sep=".")
+TraitSignificant<-paste("GS",phenotype,sep=".")
+
+path_output_module_GO   <-paste0("Data/",module,"_",phenotype,"_",direction,"_output_df_GO.Rdata")
+path_output_module_KEGG <-paste0("Data/",module,"_",phenotype,"_",direction,"_output_df_KEGG.Rdata")
+# path_output_module_GO   <-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_GO.Rdata")
+# path_output_module_KEGG <-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_KEGG.Rdata")
+
+
+selected_module <-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation[moduleGenes,TraitAssociation],
+                         GS=geneTraitAssociation[moduleGenes,TraitSignificant],
+                         gene=rownames(geneModuleMembership[moduleGenes,]))
+
+# Identify the hub genes as the genes above the 5% and 95% quantiles for two directional selection
+MM_cutoff <- quantile(selected_module$MM,prob=c(0.05,0.95))
+GA_cutoff <- quantile(selected_module$GA,prob=c(0.05,0.95))
+
+GAMM <- selected_module %>% mutate(gene=rownames(geneModuleMembership)[moduleGenes],
+                                module=module)
+
+selected_genes_module <- subset(GAMM,((MM < MM_cutoff[1])|(MM > MM_cutoff[2]))& ((GA < GA_cutoff[1])|(GA > GA_cutoff[2]))) %>% filter(gene %in% anno_coding$gene_symbol)
+
+selected_genes_module_list<-selected_genes_module$gene
+
+
+selected_module_2 <- selected_module %>% mutate(p.adj=p.adjust(GS,method="BY")) %>%
+                                    arrange(desc(abs(GA))) %>% 
+                                    dplyr::rename("Gene.symbol"="gene",
+                                           "logFC"="GA",
+                                           "adj.P.Val"="p.adj")
+  
+module_top_hit<-subset(selected_module_2,select=c("Gene.symbol","logFC","adj.P.Val")) %>%  filter(adj.P.Val<0.05)
+#module_top_hit %<>% mutate(top_hit=ifelse(Gene.symbol%in%selected_genes_module_list,"yes","no")) 
+
+save(module_top_hit,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Results/module_top_hit.Rdata")
+
+
+
+
+
+# Including more terms for enrichment analysis for GO database
+# output_df_GO <- run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "GO-BP",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.05,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 10)
+#load("output_df_GO.Rdata")
+#save(output_df_GO,file=path_output_module_GO)
+load(file=path_output_module_GO)
+output_df_GO %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment))
+# We select the top-25 pathway were enriched and we will present it in the results.
+output_clustered_GO <- cluster_enriched_terms(output_df_GO[1:10,], method = "hierarchical",plot_dend = T, plot_clusters_graph = T)
+p1<-enrichment_chart(output_clustered_GO, plot_by_cluster = TRUE,top_terms=10)
+p1<-p1+theme_bw()+ylab("Gene ontology biological processes ")+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 13,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 13,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+
+# selected_clusters_GO_short <- subset(output_clustered_GO,Status=="Representative") %>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment))
+# selected_clusters_GO_short %<>% mutate(database="GO") 
+# p1_shorten<-enrichment_chart(selected_clusters_GO_short, plot_by_cluster = F)
+
+# input_processed <- input_processing(brown_module_top_hit)
+# visualize_terms(
+#   result_df = selected_clusters_GO_short,
+#   hsa_KEGG = FALSE, # boolean to indicate whether human KEGG gene sets were used for enrichment analysis or not
+#   input_processed=input_processed,
+#   pin_name_path = "Biogrid"
+# )
+
+
+
+# # ## Including more terms for enrichment analysis for KEGG database
+# output_df_KEGG <-run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "KEGG",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.05,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 20)
+# save(output_df_KEGG,file=path_output_module_KEGG)
+# #load("output_df_KEGG.Rdata")
+load(file=path_output_module_KEGG)
+output_df_KEGG %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment))
+# We select the top-25 pathway were enriched and we will prersent it in the results.
+output_clustered_KEGG <- cluster_enriched_terms(output_df_KEGG[1:10,], plot_dend = T, plot_clusters_graph = T)
+p2<-enrichment_chart(output_clustered_KEGG, plot_by_cluster = TRUE,top_terms=10)
+p2<-p2+theme_bw()+ylab("KEGG pathways")+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=14),
+        axis.title.y = element_text(size = 14,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+# selected_clusters_KEGG_short <- subset(output_clustered_KEGG,Status=="Representative") %>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment))
+# selected_clusters_KEGG_short %<>% mutate(database="KEGG") 
+# p2_shorten<-enrichment_chart(selected_clusters_KEGG_short, plot_by_cluster = F)
+
+# input_processed <- input_processing(brown_module_top_hit)
+# visualize_terms(
+#   result_df = output_df_KEGG,
+#   hsa_KEGG = T, # boolean to indicate whether human KEGG gene sets were used for enrichment analysis or not
+#   input_processed=input_processed,
+#   pin_name_path = "Biogrid"
+# )
+
+
+png(paste0(path_output_2,"/Pathway_",module,"_",phenotype,"_",direction,"_long_format.png"),res=500, units = 'in', width = 12, height =8)
+#cowplot::plot_grid(p1,p2, ncol = 2,labels = c('GO database', 'KEGG database'),align = "h",axis = "tblr")
+
+cowplot::plot_grid(p1,p2, ncol=1,align = "v",axis = "tblr",rel_heights =c(1,1),vjust = -2)
+dev.off()
+
+
+# png(paste0(path_output,"/Pathway_",module,"_",phenotype,"_",direction,"_short_format.png"),res=400, units = 'in', width =8, height =7)
+# cowplot::plot_grid(p1_shorten,p2_shorten, nrow = 2,labels = c('GO database', 'KEGG database'),align = "v",axis = "tblr",rel_heights =c(5,1),vjust = 1)
+# dev.off()
+
+```
+
+
+##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module brown
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# Define two function to gete two database KEGG and GO
+# Get gene list KEGG pathway
+get_genelist_pathway_kegg <- function(hsa_ID){
+  library("KEGGREST")
+  names <- keggGet(hsa_ID)[[1]]$GENE
+  namesodd <-  names[seq(0,length(names),2)]
+  namestrue <- gsub("\\;.*","",namesodd)
+}
+
+# Get gene list GO pathway from msigdb
+#install.packages("msigdbr")
+library(msigdbr)
+cgp_gene_sets = msigdbr(species = "human", category = "C5")
+
+
+# In this analysis we only focus on the representative pathways
+top_hit_gene<-"CNIH4"
+phenotype<-"log2_CT"
+
+
+KEGG_pathway_data<-list()
+for(i in 1:length(output_df_KEGG$ID)){
+  KEGG_pathway_data[[output_df_KEGG$Term_Description[i]]]<-get_genelist_pathway_kegg(hsa_ID = output_df_KEGG$ID[i])
+}
+KEGG_pathway_data
+
+
+GO_pathway_data<-list()
+for(i in 1:length(output_df_GO$ID)){
+  tmp<-cgp_gene_sets %>% filter(gs_exact_source == output_df_GO$ID[i]) %>% as.data.frame()
+  GO_pathway_data[[output_df_GO$Term_Description[i]]]<-as.vector(unname(tmp[,"human_gene_symbol"]))
+}
+GO_pathway_data
+
+# Create geneset list for perform SSGSEA
+gs <- append(GO_pathway_data,KEGG_pathway_data)
+
+# Input expression data for SSGSEA
+dim(datExpr)
+## a matrix with rownames gene symbol, colnames sample label
+
+#  Compute SSGSEA
+library(BiocParallel)
+library(GSVA)
+#GSVA_N <- t(gsva(count_N, modules, mx.diff=T,method="GSVA",kcdf = "Gaussian",abs.ranking=F)) 
+GSVA_brown <- gsva(t(datExpr), gs,method="ssgsea",mx.diff=T,BPPARAM=MulticoreParam(12))
+GSVA_brown<-as.data.frame(t(GSVA_brown))
+GSVA_brown_combined<-merge(clinical_RNA,GSVA_brown,by='row.names')
+GSVA_brown_combined %<>% dplyr::select(Row.names,top_hit_gene,phenotype,colnames(GSVA_brown))
+
+R_sq<-c()
+for( i in colnames(GSVA_brown)){
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"x"=GSVA_brown_combined[,"CNIH4"])
+  f<-summary(lm(GSVA_i~x,data=dat_tmp))
+  R_sq<-c(R_sq,f$adj.r.squared)
+}
+names(R_sq)<-colnames(GSVA_brown)
+# # library(ggpmisc)
+# for(gene in top_hit_gene){
+#   p<-list()
+# for( i in colnames(GSVA_brown)){
+#   dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"x"=GSVA_brown_combined[,gene])
+#   p[[i]]<-ggplot(data=dat_tmp,aes(x=x,y=GSVA_i))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=T) +
+#   stat_poly_eq()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",i))+xlab(paste0(gene," expression"))
+# }
+# 
+# png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_",gene,"_vs_gene_set_enrichment_score.png"),
+#     res=500, units = 'in', width = 50, height =25)
+# cowplot::plot_grid(plotlist = p, nrow = 5)+ggtitle(paste("GSEA score vs. ", gene))+ theme(plot.title = element_text(hjust = 0.5))
+# dev.off()
+# 
+# }
+ndx <- order(R_sq, decreasing = T)[1:10]
+enriched_pathway<-names(R_sq[ndx])
+for(i in 1:6){
+  png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_","CNIH4_",enriched_pathway[i],"_vs_gene_set_enrichment_score_top_pathway.png"),
+    res=400, units = 'in', width = 5, height =5)
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,enriched_pathway[i]],"x"=GSVA_brown_combined[,"CNIH4"])
+ggplot(data=dat_tmp,aes(x=x,y=GSVA_i))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7)+theme_bw()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",enriched_pathway[i]))+xlab(paste0("CNIH4"," expression"))+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+dev.off()
+}
+# p<-list()
+# for( i in colnames(GSVA_brown)){
+  # dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"y"=GSVA_brown_combined[,phenotype])
+  # p[[i]]<-ggplot(data=dat_tmp,aes(x=y,y=GSVA_i))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=F) +
+  # stat_poly_eq()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",i))+xlab(paste0("Gene Association for ",phenotype))
+# }
+# 
+# png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"vs_gene_set_enrichment_score.png"),
+#     res=500, units = 'in', width = 50, height =25)
+# cowplot::plot_grid(plotlist = p, nrow = 5)+ggtitle(paste("GSEA score vs. ",phenotype))+ theme(plot.title = element_text(hjust = 0.5))
+# dev.off()
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_vs_gene_set_enrichment_score_top_pathway.png"),
+    res=400, units = 'in', width = 5, height =5)
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,enriched_pathway[i]],"y"=GSVA_brown_combined[,phenotype])
+  ggplot(data=dat_tmp,aes(x=y,y=GSVA_i))+geom_point(alpha=0.25,col=module)+theme_bw()+stat_poly_line(se=T)+stat_cor(size = 7,cor.coef.name = "r")+theme_bw()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",enriched_pathway[i]))+xlab(paste0("Gene Association for ",phenotype))+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+dev.off()
+
+GSVA_brown_combined_long<-gather(GSVA_brown_combined, pathways, ssGSEA, `immune response`:`Pathogenic Escherichia coli infection`, factor_key=TRUE)
+means_GSEA<-colMeans(GSVA_brown_combined[,-c(1:3)])
+name <- names(means_GSEA)[order(means_GSEA)]
+ggplot(data=GSVA_brown_combined_long,aes(x=ssGSEA,y=pathways))+geom_boxplot()
+
+dat_2<-data.frame()
+for(i in c(1,2,4,6)){
+dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,enriched_pathway[i]],"x"=GSVA_brown_combined[,"CNIH4"])
+dat_tmp$pathway<-enriched_pathway[i]
+dat_2<-rbind(dat_tmp,dat_2)
+}
+
+p_2<- ggplot(data=dat_2,aes(x=x,y=GSVA_i,col=pathway))+geom_point()+theme_bw()+stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7)+ ylab("Signaling pathway")+xlab(paste0("CNIH4"," expression"))+theme(plot.title = element_text(size = 15),
+        legend.position = "right",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+save(dat_2,file="pathway_PTB.Rdata")
+
+```
+
+
+
+
+
+
+
+## Active-subnetwork-oriented Enrichment Analysis for modules associated with Chest X-ray cavity (Cavity)
+### Upregulation module (checked)
+#### Module brown
+
+```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+module<-"brown"
+phenotype<-"Cavity"
+direction<-"upregulation"
+moduleGenes<-(moduleColors==module);
+
+TraitAssociation<-paste("GA",phenotype,sep=".")
+TraitSignificant<-paste("GS",phenotype,sep=".")
+
+path_output_module_GO<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_GO.Rdata")
+path_output_module_KEGG<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_KEGG.Rdata")
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation[moduleGenes,TraitAssociation],
+                         GS=geneTraitAssociation[moduleGenes,TraitSignificant],
+                         gene=rownames(geneModuleMembership[moduleGenes,]))
+
+selected_module_2 <- selected_module %>% mutate(p.adj=p.adjust(GS,method="BY")) %>%
+                                    arrange(desc(abs(GA))) %>% 
+                                    dplyr::rename("Gene.symbol"="gene",
+                                           "logFC"="GA",
+                                           "adj.P.Val"="p.adj")
+  
+module_top_hit<-subset(selected_module_2,select=c("Gene.symbol","logFC","adj.P.Val")) %>% filter(adj.P.Val<0.05)
+
+
+## Including more terms for enrichment analysis for GO database
+# output_df_GO <- run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "GO-BP",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.05,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 10)
+# save(output_df_GO,file=path_output_module_GO)
+# load(file="output_df_GO_chestXray.Rdata")
+load(file=path_output_module_GO)
+output_df_GO %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment))
+# We select the top-25 pathway were enriched and we will prersent it in the results.
+output_clustered_GO <- cluster_enriched_terms(output_df_GO[1:25,], method = "hierarchical",plot_dend = T, plot_clusters_graph = T)
+p1<-enrichment_chart(output_clustered_GO, plot_by_cluster = TRUE,top_terms=25)
+p1<-p1+theme_bw()+ylab("KEGG pathways")+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+# selected_clusters_GO_short <- subset(output_clustered_GO,Status=="Representative") %>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment))
+# selected_clusters_GO_short %<>% mutate(database="GO") 
+# p1_shorten<-enrichment_chart(selected_clusters_GO_short, plot_by_cluster = F)
+
+# input_processed <- input_processing(brown_module_top_hit)
+# visualize_terms(
+#   result_df = selected_clusters_GO_short,
+#   hsa_KEGG = FALSE, # boolean to indicate whether human KEGG gene sets were used for enrichment analysis or not
+#   input_processed=input_processed,
+#   pin_name_path = "Biogrid"
+# )
+
+
+
+# # ## Including more terms for enrichment analysis for KEGG database
+# output_df_KEGG <-run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "KEGG",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.05,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 20)
+#save(output_df_KEGG,file=path_output_module_KEGG)
+# load(file="output_df_KEGG_Cavity.Rdata")
+load(file=path_output_module_KEGG)
+output_df_KEGG %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment))
+# We select the top-25 pathway were enriched and we will prersent it in the results.
+output_clustered_KEGG <- cluster_enriched_terms(output_df_KEGG[1:75,], plot_dend = T, plot_clusters_graph = T)
+p2<-enrichment_chart(output_clustered_KEGG, plot_by_cluster = TRUE,top_terms=75)
+p2<-p2+theme_bw()+ylab("KEGG pathways")+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+# selected_clusters_KEGG_short <- subset(output_clustered_KEGG,Status=="Representative") %>% arrange(desc(occurrence),lowest_p)
+# selected_clusters_KEGG_short %<>% mutate(database="KEGG") 
+# p2_shorten<-enrichment_chart(selected_clusters_KEGG_short, plot_by_cluster = F)
+
+# input_processed <- input_processing(brown_module_top_hit)
+# visualize_terms(
+#   result_df = selected_clusters_KEGG_short,
+#   hsa_KEGG = T, # boolean to indicate whether human KEGG gene sets were used for enrichment analysis or not
+#   input_processed=input_processed,
+#   pin_name_path = "Biogrid"
+# )
+
+#selected_clusters<-rbind(selected_clusters_GO_short,selected_clusters_KEGG_short)
+png(paste0(path_output,"/Pathway_",module,"_",phenotype,"_",direction,"_long_format.png"),res=400, units = 'in', width = 10, height =14)
+cowplot::plot_grid(p1,p2, nrow = 2,labels = c('GO database', 'KEGG database'),align = "v",axis = "tblr",rel_heights =c(1,3),vjust = 1)
+dev.off()
+
+
+# png(paste0(path_output,"/Pathway_",module,"_",phenotype,"_",direction,"_short_format.png"),res=400, units = 'in', width =7, height =7)
+# cowplot::plot_grid(p1_shorten,p2_shorten, nrow = 2,labels = c('GO database', 'KEGG database'),align = "v",axis = "tblr",rel_heights =c(1,1.34),vjust = 1)
+# dev.off()
+
+```
+
+
+##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module brown
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# In this analysis we only focus on the representative pathways
+top_hit_gene<-"CNIH4" #module_top_hit[1:3,"Gene.symbol"]
+phenotype<-"Cavity"
+
+KEGG_pathway_data<-list()
+for(i in 1:length(output_df_KEGG$ID)){
+  KEGG_pathway_data[[output_df_KEGG$Term_Description[i]]]<-get_genelist_pathway_kegg(hsa_ID = output_df_KEGG$ID[i])
+}
+KEGG_pathway_data
+
+
+GO_pathway_data<-list()
+for(i in 1:length(output_df_GO$ID)){
+  tmp<-cgp_gene_sets %>% filter(gs_exact_source == output_df_GO$ID[i]) %>% as.data.frame()
+  GO_pathway_data[[output_df_GO$Term_Description[i]]]<-as.vector(unname(tmp[,"human_gene_symbol"]))
+}
+GO_pathway_data
+
+# Create geneset list for perform SSGSEA
+gs <- append(GO_pathway_data,KEGG_pathway_data)
+
+# Input expression data for SSGSEA
+dim(datExpr)
+## a matrix with rownames gene symbol, colnames sample label
+
+#  Compute SSGSEA
+#GSVA_N <- t(gsva(count_N, modules, mx.diff=T,method="GSVA",kcdf = "Gaussian",abs.ranking=F)) 
+GSVA_brown <- gsva(t(datExpr), gs,method="ssgsea",mx.diff=T,BPPARAM=MulticoreParam(12))
+GSVA_brown<-as.data.frame(t(GSVA_brown))
+GSVA_brown_combined<-merge(clinical_RNA,GSVA_brown,by='row.names')
+GSVA_brown_combined %<>% dplyr::select(Row.names,top_hit_gene,phenotype,colnames(GSVA_brown))
+GSVA_brown_combined %<>% mutate(Cavity=ifelse(Cavity=="Y","yes","no")) %>% filter(!is.na(Cavity))
+
+R_sq<-c()
+for( i in colnames(GSVA_brown)){
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"x"=GSVA_brown_combined[,"CNIH4"])
+  f<-summary(lm(GSVA_i~x,data=dat_tmp))
+  R_sq<-c(R_sq,f$adj.r.squared)
+}
+names(R_sq)<-colnames(GSVA_brown)
+
+
+# # library(ggpmisc)
+# for(gene in top_hit_gene){
+#   p<-list()
+# for( i in colnames(GSVA_brown)){
+#   dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"x"=GSVA_brown_combined[,gene])
+#   p[[i]]<-ggplot(data=dat_tmp,aes(x=x,y=y))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=T) +
+#   stat_poly_eq()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",i))+xlab(paste0(gene," expression"))
+# }
+# 
+# png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_",gene,"_vs_gene_set_enrichment_score.png"),
+#     res=400, units = 'in', width = 16, height =12)
+# cowplot::plot_grid(plotlist = p, nrow = 3)+ggtitle(paste("GSEA score vs. ", gene))+ theme(plot.title = element_text(hjust = 0.5))
+# dev.off()
+# }
+
+enriched_pathway<-names(R_sq[R_sq==max(R_sq)])
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_","CNIH4","_vs_gene_set_enrichment_score_top_pathway.png"),
+    res=400, units = 'in', width = 5, height =5)
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,enriched_pathway],"x"=GSVA_brown_combined[,"CNIH4"])
+ggplot(data=dat_tmp,aes(x=x,y=GSVA_i))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=T) +
+  stat_poly_eq()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",enriched_pathway))+xlab(paste0("CNIH4"," expression"))+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"))
+dev.off()
+
+
+
+
+# p<-list()
+# library(ggpubr)
+# my_comparisons <- list( c("yes", "no"))
+# for( i in colnames(GSVA_brown)){
+#   dat_tmp<-data.frame("ssGSEA"=GSVA_brown_combined[,i],"Cavity"=GSVA_brown_combined[,"Cavity"]) 
+#   f<-lm(ssGSEA~Cavity,dat_tmp)
+#   p[[i]]<-ggplot(dat_tmp, aes(y = ssGSEA, x = Cavity)) +
+#   geom_boxplot(size=1,position=position_dodge(1),width=0.7,
+#                fill="white",outlier.colour="red", 
+#                outlier.shape=NA,outlier.size=3)+
+#   geom_jitter(aes(color=Cavity,fill=Cavity),width=0.2, height=0.2,size=2,alpha = 0.5)+
+#   scale_color_manual(values=c("#de2d26","#3182bd"))+
+#   theme_bw()+
+#   labs(x="Chest X-ray Cavity",y = paste("Single-sample Gene Set Enrichment Score\n",i))+ 
+#   theme(plot.title = element_text(size = 15),
+#         legend.position = "none",
+#         axis.text = element_text(size = 15),
+#         axis.text.x=element_text(color="black",size=13,face="bold"),
+#         axis.title.x = element_text(size = 15,color="black",face="bold"),
+#         axis.text.y=element_text(color="black",size=15),
+#         axis.title.y = element_text(size = 15,color="black",face="bold"))+
+#   stat_compare_means(aes(label = paste0("p = ", ..p.format..)), size = 5,label.x = 1.2, label.y = (max(dat_tmp$ssGSEA)+0.1),
+#                      comparisons = my_comparisons)+annotate("text",size = 5, x=1.5, y=(min(dat_tmp$ssGSEA)-0.1), label= paste("ES difference=",round(f$coefficients[2],4)))
+# }
+
+library(ggpubr)
+my_comparisons <- list( c("yes", "no"))
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_vs_gene_set_enrichment_score_top_pathway.png"),
+    res=400, units = 'in', width = 5, height =5)
+ dat_tmp<-data.frame("ssGSEA"=GSVA_brown_combined[,enriched_pathway],"Cavity"=GSVA_brown_combined[,"Cavity"]) 
+  ggplot(dat_tmp, aes(y = ssGSEA, x = Cavity)) +
+  geom_boxplot(size=1,position=position_dodge(1),width=0.7,
+               fill="white",outlier.colour="red", 
+               outlier.shape=NA,outlier.size=3)+
+  geom_jitter(aes(color=Cavity,fill=Cavity),width=0.2,size=2,alpha = 0.5)+
+  scale_color_manual(values=c("#de2d26","#3182bd"))+
+  theme_bw()+
+  labs(x="Chest X-ray Cavity",y = paste("Single-sample Gene Set Enrichment Score\n",i))+ 
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"))+
+  stat_compare_means(aes(label = paste0("p = ", ..p.format..)), size = 5,label.x = 1.2, label.y = (max(dat_tmp$ssGSEA)+0.1),
+                     comparisons = my_comparisons)
+dev.off()
+```
+
+
+
+
+### Dowregulation module
+#### Module magenta (checked)
+
+```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+module<-"magenta"
+phenotype<-"Cavity"
+direction<-"downregulation"
+moduleGenes<-(moduleColors==module);
+
+TraitAssociation<-paste("GA",phenotype,sep=".")
+TraitSignificant<-paste("GS",phenotype,sep=".")
+
+path_output_module_GO<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_GO.Rdata")
+path_output_module_KEGG<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_KEGG.Rdata")
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation[moduleGenes,TraitAssociation],
+                         GS=geneTraitAssociation[moduleGenes,TraitSignificant],
+                         gene=rownames(geneModuleMembership[moduleGenes,]))
+
+selected_module_2 <- selected_module %>% mutate(p.adj=p.adjust(GS,method="BY")) %>%
+                                    arrange(desc(abs(GA))) %>% 
+                                    dplyr::rename("Gene.symbol"="gene",
+                                           "logFC"="GA",
+                                           "adj.P.Val"="p.adj")
+  
+module_top_hit<-subset(selected_module_2,select=c("Gene.symbol","logFC","adj.P.Val")) %>%  filter(adj.P.Val<0.05)
+
+
+## Including more terms for enrichment analysis for GO database
+# output_df_GO <- run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "GO-BP",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.05,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 10)
+# load(file="output_df_GO_Cavity_magenta.Rdata")
+# save(output_df_GO,file=path_output_module_GO)
+load(file=path_output_module_GO)
+output_df_GO %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment)) #%>% filter(Fold_Enrichment >0)
+# No Go pathways was enriched 
+# p1<-enrichment_chart(output_df_GO)
+
+# # ## Including more terms for enrichment analysis for KEGG database
+# output_df_KEGG <-run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "KEGG",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.05,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 20)
+# load(file="output_df_KEGG_Cavity_magenta.Rdata")
+# save(output_df_KEGG,file=path_output_module_KEGG)
+load(file=path_output_module_KEGG)
+output_df_KEGG %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment)) #%>% filter(Fold_Enrichment >0)
+# On KEGG pathway was enriched
+p2<-enrichment_chart(output_df_KEGG)
+
+# input_processed <- input_processing(module_top_hit)
+# visualize_terms(
+#   result_df = output_df_KEGG,
+#   hsa_KEGG = T, # boolean to indicate whether human KEGG gene sets were used for enrichment analysis or not
+#   input_processed=input_processed,
+#   pin_name_path = "Biogrid"
+# )
+
+png(paste0(path_output,"/Pathway_",module,"_",phenotype,"_",direction,"_short_format.png"),res=400, units = 'in', width =10, height =3)
+cowplot::plot_grid(p2, nrow = 1,labels = c('KEGG database'),align = "v",axis = "tblr")
+dev.off()
+
+```
+
+
+##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module brown
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# In this analysis we only focus on the representative pathways
+top_hit_gene<-module_top_hit[1:3,"Gene.symbol"]# NCALD
+phenotype<-"Cavity"
+
+
+KEGG_pathway_data<-list()
+for(i in 1:length(output_df_KEGG$ID)){
+  KEGG_pathway_data[[output_df_KEGG$Term_Description[i]]]<-get_genelist_pathway_kegg(hsa_ID = output_df_KEGG$ID[i])
+}
+KEGG_pathway_data
+
+
+# Create geneset list for perform SSGSEA
+gs <- KEGG_pathway_data
+
+# Input expression data for SSGSEA
+dim(datExpr)
+## a matrix with rownames gene symbol, colnames sample label
+
+#  Compute SSGSEA
+#GSVA_N <- t(gsva(count_N, modules, mx.diff=T,method="GSVA",kcdf = "Gaussian",abs.ranking=F)) 
+GSVA_brown <- gsva(t(datExpr), gs,method="ssgsea",mx.diff=T,BPPARAM=MulticoreParam(12))
+GSVA_brown<-as.data.frame(t(GSVA_brown))
+GSVA_brown_combined<-merge(clinical_RNA,GSVA_brown,by='row.names')
+GSVA_brown_combined %<>% dplyr::select(Row.names,top_hit_gene,phenotype,colnames(GSVA_brown))
+GSVA_brown_combined %<>% mutate(Cavity=ifelse(Cavity=="Y","yes","no")) %>% filter(!is.na(Cavity))
+
+# library(ggpmisc)
+
+p<-list()
+gene<-top_hit_gene[1]
+for( i in colnames(GSVA_brown)){
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"x"=GSVA_brown_combined[,gene])
+  p[[i]]<-ggplot(data=dat_tmp,aes(x=x,y=GSVA_i))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=T) +
+  stat_poly_eq()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",i))+xlab(paste0(gene," expression"))+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"))
+}
+
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_",gene,"_vs_gene_set_enrichment_score.png"),
+    res=400, units = 'in', width = 20, height =5)
+cowplot::plot_grid(plotlist = p, nrow = 1)+ggtitle(paste("GSEA score vs. ",gene))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+
+
+# Make the nice boxplot for this and add the p.vlaue for the test.
+enriched_pathway<-colnames(GSVA_brown)
+p<-list()
+library(ggpubr)
+my_comparisons <- list( c("yes", "no"))
+p<-list()
+for( i in 1:length(enriched_pathway)){
+  dat_tmp<-data.frame("ssGSEA"=GSVA_brown_combined[,enriched_pathway[i]],"Cavity"=GSVA_brown_combined[,"Cavity"]) 
+  p[[i]]<-ggplot(dat_tmp, aes(y = ssGSEA, x = Cavity)) +
+  geom_boxplot(size=1,position=position_dodge(1),width=0.7,
+               fill="white",outlier.colour="red", 
+               outlier.shape=NA,outlier.size=3)+
+  geom_jitter(aes(color=Cavity,fill=Cavity),width=0.2,size=2,alpha = 0.5)+
+  scale_color_manual(values=c("#de2d26","#3182bd"))+
+  theme_bw()+
+  labs(x="Chest X-ray Cavity",y = paste("Single-sample Gene Set Enrichment Score\n",enriched_pathway[i]))+ 
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"))+
+  stat_compare_means(aes(label = paste0("p = ", ..p.format..)), size = 5,label.x = 1.2, label.y = (max(dat_tmp$ssGSEA)+0.1),
+                     comparisons = my_comparisons)
+}
+
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_vs_gene_set_enrichment_score_top_pathway.png"),
+    res=400, units = 'in', width = 20, height =5)
+cowplot::plot_grid(plotlist = p, nrow = 1)+ggtitle(paste("GSEA score vs. ",phenotype))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### Module green (checked)
+
+```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+module<-"green"
+phenotype<-"Cavity"
+direction<-"downregulation"
+moduleGenes<-(moduleColors==module);
+
+TraitAssociation<-paste("GA",phenotype,sep=".")
+TraitSignificant<-paste("GS",phenotype,sep=".")
+
+path_output_module_GO<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_GO.Rdata")
+path_output_module_KEGG<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_KEGG.Rdata")
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation[moduleGenes,TraitAssociation],
+                         GS=geneTraitAssociation[moduleGenes,TraitSignificant],
+                         gene=rownames(geneModuleMembership[moduleGenes,]))
+
+selected_module_2 <- selected_module %>% mutate(p.adj=p.adjust(GS,method="BY")) %>%
+                                    arrange(desc(abs(GA))) %>% 
+                                    dplyr::rename("Gene.symbol"="gene",
+                                           "logFC"="GA",
+                                           "adj.P.Val"="p.adj")
+  
+module_top_hit<-subset(selected_module_2,select=c("Gene.symbol","logFC","adj.P.Val")) %>%  filter(adj.P.Val<0.05)
+
+
+## Including more terms for enrichment analysis for GO database
+# output_df_GO <- run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "GO-BP",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.2,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 20)
+# save(output_df_GO,file=path_output_module_GO)
+load(file=path_output_module_GO)
+
+# No GO pathway was enriched 
+
+
+
+# # ## Including more terms for enrichment analysis for KEGG database
+# output_df_KEGG <-run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "KEGG",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.2,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 20)
+# 
+# save(output_df_KEGG,file=path_output_module_KEGG)
+load(file=path_output_module_KEGG)
+# No KEGG pathway was enriched
+
+```
+
+## Active-subnetwork-oriented Enrichment Analysis for modules associated with Chest X-ray lung proportion damage
+### Upregulation module
+
+#### Module pink (checked)
+
+```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+module<-"pink"
+phenotype<-"Lung_proportion"
+direction<-"upregulation"
+moduleGenes<-(moduleColors==module);
+
+TraitAssociation<-paste("GA",phenotype,sep=".")
+TraitSignificant<-paste("GS",phenotype,sep=".")
+
+path_output_module_GO<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_GO.Rdata")
+path_output_module_KEGG<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_KEGG.Rdata")
+
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation[moduleGenes,TraitAssociation],
+                         GS=geneTraitAssociation[moduleGenes,TraitSignificant],
+                         gene=rownames(geneModuleMembership[moduleGenes,]))
+
+selected_module_2 <- selected_module %>% mutate(p.adj=p.adjust(GS,method="BY")) %>%
+                                    arrange(desc(abs(GA))) %>% 
+                                    dplyr::rename("Gene.symbol"="gene",
+                                           "logFC"="GA",
+                                           "adj.P.Val"="p.adj")
+  
+module_top_hit<-subset(selected_module_2,select=c("Gene.symbol","logFC","adj.P.Val")) %>%  filter(adj.P.Val<0.05)
+
+
+## Including more terms for enrichment analysis for GO database
+# output_df_GO <- run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "GO-BP",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.2,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 10)
+# load(file="output_df_GO_lung_proportion_pink.Rdata")
+# save(output_df_GO,file=path_output_module_GO)
+load(file=path_output_module_GO)
+output_df_GO %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment)) %>% filter(lowest_p<0.05)
+# No GO pathways was enriched by this pink modules
+
+# # ## Including more terms for enrichment analysis for KEGG database
+# output_df_KEGG <-run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "KEGG",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.05,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 20)
+# load(file="output_df_KEGG_lung_proportion_pink.Rdata")
+# save(output_df_KEGG,file=path_output_module_KEGG)
+# load(file="output_df_KEGG_Cavity.Rdata")
+load(file=path_output_module_KEGG)
+output_df_KEGG %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment)) %>% filter(lowest_p<0.05)
+# We select the top-25 pathway were enriched and we will prersent it in the results.
+output_clustered_KEGG <- cluster_enriched_terms(output_df_KEGG, plot_dend = T, plot_clusters_graph = T)
+p2<-enrichment_chart(output_clustered_KEGG, plot_by_cluster = TRUE)
+# selected_clusters_KEGG_short <- subset(output_clustered_KEGG,Status=="Representative") %>% arrange(desc(occurrence),lowest_p)
+# selected_clusters_KEGG_short %<>% mutate(database="KEGG") 
+# p2_shorten<-enrichment_chart(selected_clusters_KEGG_short, plot_by_cluster = F)
+
+# input_processed <- input_processing(module_top_hit)
+# visualize_terms(
+#   result_df = selected_clusters_KEGG_short,
+#   hsa_KEGG = T, # boolean to indicate whether human KEGG gene sets were used for enrichment analysis or not
+#   input_processed=input_processed,
+#   pin_name_path = "Biogrid"
+# )
+
+#selected_clusters<-rbind(selected_clusters_KEGG_short)
+
+
+png(paste0(path_output,"/Pathway_",module,"_",phenotype,"_",direction,"_long_format.png"),res=400, units = 'in', width = 7, height =4)
+cowplot::plot_grid(p2, nrow = 1,labels = c('KEGG database'),align = "v",axis = "tblr")
+dev.off()
+
+# png(paste0(path_output,"/Pathway_",module,"_",phenotype,"_",direction,"_short_format.png"),res=400, units = 'in', width =7, height =3)
+# cowplot::plot_grid(p2_shorten, nrow = 1,labels = c('KEGG database'),align = "v",axis = "tblr")
+# dev.off()
+
+```
+
+
+##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module pink
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# In this analysis we only focus on the representative pathways
+top_hit_gene<-"PGRMC1"#module_top_hit[1:3,"Gene.symbol"]
+phenotype<-"Lung_proportion"
+
+
+KEGG_pathway_data<-list()
+for(i in 1:length(output_df_KEGG$ID)){
+  KEGG_pathway_data[[output_df_KEGG$Term_Description[i]]]<-get_genelist_pathway_kegg(hsa_ID = output_df_KEGG$ID[i])
+}
+KEGG_pathway_data
+
+
+# Create geneset list for perform SSGSEA
+gs <- KEGG_pathway_data
+
+# Input expression data for SSGSEA
+dim(datExpr)
+## a matrix with rownames gene symbol, colnames sample label
+
+#  Compute SSGSEA
+#GSVA_N <- t(gsva(count_N, modules, mx.diff=T,method="GSVA",kcdf = "Gaussian",abs.ranking=F)) 
+GSVA_brown <- gsva(t(datExpr), gs,method="ssgsea",mx.diff=T,BPPARAM=MulticoreParam(12))
+GSVA_brown<-as.data.frame(t(GSVA_brown))
+GSVA_brown_combined<-merge(clinical_RNA,GSVA_brown,by='row.names')
+GSVA_brown_combined %<>% dplyr::select(Row.names,top_hit_gene,phenotype,colnames(GSVA_brown))
+
+# library(ggpmisc)
+
+
+R_sq<-c()
+  for( i in colnames(GSVA_brown)){
+    dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"x"=GSVA_brown_combined[,top_hit_gene])
+    f<-summary(lm(GSVA_i~x,data=dat_tmp))
+    R_sq<-c(R_sq,f$adj.r.squared)
+  }
+names(R_sq)<-colnames(GSVA_brown)
+enriched_pathway<-names(R_sq[R_sq==max(R_sq)])
+
+# for( i in colnames(GSVA_brown)){
+#   dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"x"=GSVA_brown_combined[,gene])
+#   p[[i]]<-ggplot(data=dat_tmp,aes(x=x,y=GSVA_i))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=T) +
+#   stat_poly_eq()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",i))+xlab(paste0(gene," expression"))
+# }
+# 
+# png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_",gene,"_vs_gene_set_enrichment_score.png"),
+#     res=400, units = 'in', width = 4, height =12)
+# cowplot::plot_grid(plotlist = p, nrow = 3)+ggtitle(paste("GSEA score vs. ", gene))+ theme(plot.title = element_text(hjust = 0.5))
+# dev.off()
+
+
+
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_",top_hit_gene,"_vs_gene_set_enrichment_score.png"),
+    res=400, units = 'in', width = 4, height =4)
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,enriched_pathway],"x"=GSVA_brown_combined[,top_hit_gene])
+ggplot(data=dat_tmp,aes(x=x,y=GSVA_i))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=T) +
+  stat_poly_eq()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",enriched_pathway))+xlab(paste0(top_hit_gene," expression"))
+dev.off()
+
+# Make the nice boxplot for this and add the p.vlaue for the test.
+
+
+
+# Need to make the figure for beta regression.
+
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_vs_gene_set_enrichment_score_top_pathway.png"),
+    res=400, units = 'in', width = 5, height =5)
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,enriched_pathway],"y"=GSVA_brown_combined[,phenotype])
+  ggplot(data=dat_tmp,aes(x=y,y=GSVA_i))+geom_point(alpha=0.2,col=module)+theme_bw()+geom_smooth(method="glm",family="binomial",se=F) +
+  stat_poly_eq()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",enriched_pathway))+xlab(paste0("Gene Association for ",phenotype))
+dev.off()
+
+```
+
+
+
+
+
+### Dowregulation module
+#### Module red (checked)
+
+```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+module<-"red"
+phenotype<-"Lung_proportion"
+direction<-"downregulation"
+moduleGenes<-(moduleColors==module);
+
+TraitAssociation<-paste("GA",phenotype,sep=".")
+TraitSignificant<-paste("GS",phenotype,sep=".")
+
+path_output_module_GO<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_GO.Rdata")
+path_output_module_KEGG<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_KEGG.Rdata")
+
+
+
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation[moduleGenes,TraitAssociation],
+                         GS=geneTraitAssociation[moduleGenes,TraitSignificant],
+                         gene=rownames(geneModuleMembership[moduleGenes,]))
+
+selected_module_2 <- selected_module %>% mutate(p.adj=p.adjust(GS,method="BY")) %>%
+                                    arrange(desc(abs(GA))) %>% 
+                                    dplyr::rename("Gene.symbol"="gene",
+                                           "logFC"="GA",
+                                           "adj.P.Val"="p.adj")
+  
+module_top_hit<-subset(selected_module_2,select=c("Gene.symbol","logFC","adj.P.Val")) %>%  filter(adj.P.Val<0.05)
+
+
+## Including more terms for enrichment analysis for GO database
+# output_df_GO <- run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "GO-BP",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.05,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 10)
+# load(file="output_df_GO_Lung_proportion_red.Rdata")
+# save(output_df_GO,file=path_output_module_GO)
+load(file=path_output_module_GO)
+output_df_GO %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment)) %>% filter(Fold_Enrichment>0)
+# No pathway was enriched with Go data
+
+# input_processed <- input_processing(brown_module_top_hit)
+# visualize_terms(
+#   result_df = selected_clusters_GO_short,
+#   hsa_KEGG = FALSE, # boolean to indicate whether human KEGG gene sets were used for enrichment analysis or not
+#   input_processed=input_processed,
+#   pin_name_path = "Biogrid"
+# )
+
+
+
+# # ## Including more terms for enrichment analysis for KEGG database
+# output_df_KEGG <-run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "KEGG",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.05,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 20)
+# load(file="output_df_KEGG_lung_proportion_red.Rdata")
+# save(output_df_KEGG,file=path_output_module_KEGG)
+load(file=path_output_module_KEGG)
+output_df_KEGG %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment))%>% filter(Fold_Enrichment>0& lowest_p<0.05)
+# We select the top-25 pathway were enriched and we will prersent it in the results.
+output_clustered_KEGG <- cluster_enriched_terms(output_df_KEGG, plot_dend = T, plot_clusters_graph = T)
+p2<-enrichment_chart(output_clustered_KEGG, plot_by_cluster = TRUE)
+selected_clusters_KEGG_short <- subset(output_clustered_KEGG,Status=="Representative") %>% arrange(desc(occurrence),lowest_p)
+selected_clusters_KEGG_short %<>% mutate(database="KEGG") 
+p2_shorten<-enrichment_chart(selected_clusters_KEGG_short, plot_by_cluster = F)
+
+# input_processed <- input_processing(module_top_hit)
+# visualize_terms(
+#   result_df = selected_clusters_KEGG_short,
+#   hsa_KEGG = T, # boolean to indicate whether human KEGG gene sets were used for enrichment analysis or not
+#   input_processed=input_processed,
+#   pin_name_path = "Biogrid"
+# )
+
+selected_clusters<-rbind(selected_clusters_KEGG_short)
+
+
+png(paste0(path_output,"/Pathway_",module,"_",phenotype,"_",direction,"_long_format.png"),res=400, units = 'in', width = 10, height =10)
+cowplot::plot_grid(p2, nrow = 1,labels = c('KEGG database'),align = "v",axis = "tblr")
+dev.off()
+
+
+png(paste0(path_output,"/Pathway_",module,"_",phenotype,"_",direction,"_short_format.png"),res=400, units = 'in', width =7, height =5)
+cowplot::plot_grid(p2_shorten, nrow = 1,labels = c('KEGG database'),align = "v",axis = "tblr")
+dev.off()
+
+```
+
+
+##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module brown
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# In this analysis we only focus on the representative pathways
+top_hit_gene<-c(module_top_hit[1:3,"Gene.symbol"],"CD40")
+phenotype<-"Lung_proportion"
+
+
+KEGG_pathway_data<-list()
+for(i in 1:length(selected_clusters_KEGG_short$ID)){
+  KEGG_pathway_data[[selected_clusters_KEGG_short$Term_Description[i]]]<-get_genelist_pathway_kegg(hsa_ID = selected_clusters_KEGG_short$ID[i])
+}
+KEGG_pathway_data
+
+
+# Create geneset list for perform SSGSEA
+gs <- KEGG_pathway_data
+
+# Input expression data for SSGSEA
+dim(datExpr)
+## a matrix with rownames gene symbol, colnames sample label
+
+#  Compute SSGSEA
+#GSVA_N <- t(gsva(count_N, modules, mx.diff=T,method="GSVA",kcdf = "Gaussian",abs.ranking=F)) 
+GSVA_brown <- gsva(t(datExpr), gs,method="ssgsea",mx.diff=T,BPPARAM=MulticoreParam(12))
+GSVA_brown<-as.data.frame(t(GSVA_brown))
+GSVA_brown_combined<-merge(clinical_RNA,GSVA_brown,by='row.names')
+GSVA_brown_combined %<>% dplyr::select(Row.names,top_hit_gene,phenotype,colnames(GSVA_brown))
+
+# library(ggpmisc)
+for(gene in top_hit_gene){
+  p<-list()
+for( i in colnames(GSVA_brown)){
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"x"=GSVA_brown_combined[,gene])
+  p[[i]]<-ggplot(data=dat_tmp,aes(x=x,y=GSVA_i))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=T) +
+  stat_poly_eq()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",i))+xlab(paste0(gene," expression"))
+}
+
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_",gene,"_vs_gene_set_enrichment_score.png"),
+    res=400, units = 'in', width = 4, height =12)
+cowplot::plot_grid(plotlist = p, nrow = 3)+ggtitle(paste("GSEA score vs. ", gene))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+
+}
+
+# Make the nice boxplot for this and add the p.vlaue for the test.
+
+p<-list()
+for( i in colnames(GSVA_brown)){
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"y"=GSVA_brown_combined[,phenotype])
+  p[[i]]<-ggplot(data=dat_tmp,aes(x=GSVA_i,col=y))+geom_boxplot(alpha=0.2,col=module)+theme_bw()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",i))+xlab(paste0("Gene Association for ",phenotype))
+}
+
+
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_vs_gene_set_enrichment_score.png"),
+    res=400, units = 'in', width = 16, height =12)
+cowplot::plot_grid(plotlist = p, nrow = 3)+ggtitle(paste("GSEA score vs. ",phenotype))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+```
+
+
+
+
+
+
+#### Module green (changing)
+
+```{r module brown, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+module<-"green"
+phenotype<-"Lung_proportion"
+direction<-"downregulation"
+moduleGenes<-(moduleColors==module);
+
+TraitAssociation<-paste("GA",phenotype,sep=".")
+TraitSignificant<-paste("GS",phenotype,sep=".")
+
+path_output_module_GO<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_GO.Rdata")
+path_output_module_KEGG<-paste0(path_output,"/",module,"_",phenotype,"_",direction,"_output_df_KEGG.Rdata")
+
+
+selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                         GA=geneTraitAssociation[moduleGenes,TraitAssociation],
+                         GS=geneTraitAssociation[moduleGenes,TraitSignificant],
+                         gene=rownames(geneModuleMembership[moduleGenes,]))
+
+selected_module_2 <- selected_module %>% mutate(p.adj=p.adjust(GS,method="BY")) %>%
+                                    arrange(desc(abs(GA))) %>% 
+                                    dplyr::rename("Gene.symbol"="gene",
+                                           "logFC"="GA",
+                                           "adj.P.Val"="p.adj")
+  
+module_top_hit<-subset(selected_module_2,select=c("Gene.symbol","logFC","adj.P.Val")) %>%  filter(adj.P.Val<0.05)
+
+
+## Including more terms for enrichment analysis for GO database
+# output_df_GO <- run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "GO-BP",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.2,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 10)
+# save(output_df_GO,file=path_output_module_GO)
+# load(file="output_df_GO_chestXray.Rdata")
+load(file=path_output_module_GO)
+output_df_GO %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment)) %>% filter(lowest_p<0.05)
+# We select the top-25 pathway were enriched and we will prersent it in the results.
+output_clustered_GO <- cluster_enriched_terms(output_df_GO, method = "hierarchical",plot_dend = T, plot_clusters_graph = T)
+p1<-enrichment_chart(output_clustered_GO, plot_by_cluster = TRUE)
+selected_clusters_GO_short <- subset(output_clustered_GO,Status=="Representative") %>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment))
+selected_clusters_GO_short %<>% mutate(database="GO") 
+p1_shorten<-enrichment_chart(selected_clusters_GO, plot_by_cluster = F)
+
+# input_processed <- input_processing(brown_module_top_hit)
+# visualize_terms(
+#   result_df = selected_clusters_GO_short,
+#   hsa_KEGG = FALSE, # boolean to indicate whether human KEGG gene sets were used for enrichment analysis or not
+#   input_processed=input_processed,
+#   pin_name_path = "Biogrid"
+# )
+
+
+
+# # ## Including more terms for enrichment analysis for KEGG database
+# output_df_KEGG <-run_pathfindR(module_top_hit,pin_name_path="Biogrid",
+#                               search_method = "SA",
+#                            gene_sets = "KEGG",
+#                            min_gset_size = 10,
+#                            max_gset_size = 500,
+#                            adj_method = "BY",
+#                            enrichment_threshold = 0.2,p_val_threshold = 0.05,
+#                            iterations = 100, n_processes = 20)
+# save(output_df_KEGG,file=path_output_module_KEGG)
+load(file=path_output_module_KEGG)
+output_df_KEGG %<>% arrange(lowest_p,desc(occurrence),desc(Fold_Enrichment)) %>% filter(lowest_p<0.05)
+# We select the top-25 pathway were enriched and we will prersent it in the results.
+output_clustered_KEGG <- cluster_enriched_terms(output_df_KEGG[1:25,], plot_dend = T, plot_clusters_graph = T)
+p2<-enrichment_chart(output_clustered_KEGG, plot_by_cluster = TRUE)
+selected_clusters_KEGG_short <- subset(output_clustered_KEGG,Status=="Representative") %>% arrange(desc(occurrence),lowest_p)
+selected_clusters_KEGG_short %<>% mutate(database="KEGG") 
+p2_shorten<-enrichment_chart(selected_clusters_KEGG_short, plot_by_cluster = F)
+
+# input_processed <- input_processing(brown_module_top_hit)
+# visualize_terms(
+#   result_df = selected_clusters_KEGG_short,
+#   hsa_KEGG = T, # boolean to indicate whether human KEGG gene sets were used for enrichment analysis or not
+#   input_processed=input_processed,
+#   pin_name_path = "Biogrid"
+# )
+
+selected_clusters<-rbind(selected_clusters_GO_short,selected_clusters_KEGG_short)
+
+
+png(paste0(path_output,"/Pathway_",module,"_",phenotype,"_",direction,"_long_format.png"),res=400, units = 'in', width = 10, height =10)
+cowplot::plot_grid(p1,p2, nrow = 2,labels = c('GO database', 'KEGG database'),align = "v",axis = "tblr")
+dev.off()
+
+
+png(paste0(path_output,"/Pathway_",module,"_",phenotype,"_",direction,"_short_format.png"),res=400, units = 'in', width =7, height =5)
+cowplot::plot_grid(p1_shorten,p2_shorten, nrow = 2,labels = c('GO database', 'KEGG database'),align = "v",axis = "tblr")
+dev.off()
+
+```
+
+
+##### Association between top-hit/hub gene and enrichment score of associated pathways-Single Sample Gene Set Enrichment Analysis - module brown
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# In this analysis we only focus on the representative pathways
+top_hit_gene<-module_top_hit[1:3,"Gene.symbol"]
+phenotype<-"Lung_proportion"
+
+
+KEGG_pathway_data<-list()
+for(i in 1:length(selected_clusters_KEGG_short$ID)){
+  KEGG_pathway_data[[selected_clusters_KEGG_short$Term_Description[i]]]<-get_genelist_pathway_kegg(hsa_ID = selected_clusters_KEGG_short$ID[i])
+}
+KEGG_pathway_data
+
+
+GO_pathway_data<-list()
+for(i in 1:length(selected_clusters_GO_short$ID)){
+  tmp<-cgp_gene_sets %>% filter(gs_exact_source == selected_clusters_GO_short$ID[i]) %>% as.data.frame()
+  GO_pathway_data[[selected_clusters_GO_short$Term_Description[i]]]<-as.vector(unname(tmp[,"human_gene_symbol"]))
+}
+GO_pathway_data
+
+# Create geneset list for perform SSGSEA
+gs <- append(GO_pathway_data,KEGG_pathway_data)
+
+# Input expression data for SSGSEA
+dim(datExpr)
+## a matrix with rownames gene symbol, colnames sample label
+
+#  Compute SSGSEA
+#GSVA_N <- t(gsva(count_N, modules, mx.diff=T,method="GSVA",kcdf = "Gaussian",abs.ranking=F)) 
+GSVA_brown <- gsva(t(datExpr), gs,method="ssgsea",mx.diff=T,BPPARAM=MulticoreParam(12))
+GSVA_brown<-as.data.frame(t(GSVA_brown))
+GSVA_brown_combined<-merge(clinical_RNA,GSVA_brown,by='row.names')
+GSVA_brown_combined %<>% dplyr::select(Row.names,top_hit_gene,phenotype,colnames(GSVA_brown))
+
+# library(ggpmisc)
+for(gene in top_hit_gene){
+  p<-list()
+for( i in colnames(GSVA_brown)){
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"x"=GSVA_brown_combined[,gene])
+  p[[i]]<-ggplot(data=dat_tmp,aes(x=x,y=GSVA_i))+geom_point(alpha=0.2,col=module)+theme_bw()+stat_poly_line(se=T) +
+  stat_poly_eq()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",i))+xlab(paste0(gene," expression"))
+}
+
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_",gene,"_vs_gene_set_enrichment_score.png"),
+    res=400, units = 'in', width = 16, height =12)
+cowplot::plot_grid(plotlist = p, nrow = 3)+ggtitle(paste("GSEA score vs. ", gene))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+}
+
+# Make the nice boxplot for this and add the p.vlaue for the test.
+
+p<-list()
+for( i in colnames(GSVA_brown)){
+  dat_tmp<-data.frame("GSVA_i"=GSVA_brown_combined[,i],"y"=GSVA_brown_combined[,phenotype])
+  p[[i]]<-ggplot(data=dat_tmp,aes(x=GSVA_i,col=y))+geom_boxplot(alpha=0.2,col=module)+theme_bw()+ ylab(paste("Single-sample Gene Set Enrichment Score\n",i))+xlab(paste0("Gene Association for ",phenotype))
+}
+
+
+png(file=paste0(path_output,"/",module,"_",direction,"_",phenotype,"_vs_gene_set_enrichment_score.png"),
+    res=400, units = 'in', width = 16, height =12)
+cowplot::plot_grid(plotlist = p, nrow = 3)+ggtitle(paste("GSEA score vs. ",phenotype))+ theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+```
+
+
+
+
+
+# Mediation analysis in PTB
+
+We investigate the following associations:
+
+1: Mtb burden--> IFN signaling pathway --> PD-L1 pathway
+
+2: PD-L1 pathway--> CNIH4--> T-cell receptor signaling pathways
+
+3: Mtb burden --> T-cell receptor signaling pathway --> lymphopenia
+
+4: TB infection (healthy vs TB) --> IFN signaling pathway. 
+
+May be the infection, or signal contributed mostly by neutrophils--> Perform the whole analysis baxsed on imputed data.
+
+### Association between the factors above 
+
+```{r}
+# Extract data from the three pathways: 
+library(ReactomeContentService4R)
+IFN_alpha_beta<-event2Ids(event.id = "R-HSA-909733.9")
+IFN_gamma<-event2Ids(event.id = "R-HSA-877300.7")
+
+#PD-L1 expression and PD-1 checkpoint pathway in cancer - Homo sapiens (human) hsa05235
+PD_L1<-get_genelist_pathway_kegg(hsa_ID = "hsa05235") 
+#T cell receptor signaling pathway - Homo sapiens (human)
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660") 
+targeted_pathways<-list(IFN_alpha_beta=IFN_alpha_beta$geneSymbol,IFN_gamma=IFN_gamma$geneSymbol,PD_L1=PD_L1,TCR_signaling=TCR_signaling)
+
+## Compute ssGSEA of these pathways
+
+GSVA_targeted <- gsva(t(datExpr), gset.idx.list=targeted_pathways,method="ssgsea",mx.diff=T,BPPARAM=MulticoreParam(12))
+GSVA_targeted<-as.data.frame(t(GSVA_targeted))
+GSVA_targetedcombined<-merge(clinical_RNA,GSVA_targeted,by='row.names')
+GSVA_targetedcombined %<>% dplyr::select(Row.names,"Age","log2_Lymphocyte_counts","log2_Neutrophil_counts","log2_CT","CNIH4","IFNG","CD274",colnames(GSVA_targeted))
+
+p1<-ggplot(data=GSVA_targetedcombined,aes(x=log2_CT,y=IFN_gamma))+geom_point( size=2.5,alpha=0.5,col="#313695")+theme_bw()+stat_poly_line(se=T,col="#313695") +
+  stat_cor(size = 4,cor.coef.name = "r")+scale_x_reverse()+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ylab("Enrichment score of IFN gamma signaling pathways")+xlab("Mtb Xpert Ct value")
+
+
+
+
+
+
+
+p2<-ggplot(data=GSVA_targetedcombined,aes(x=IFN_gamma,y=CD274))+geom_point( size=2.5,alpha=0.5,col="#313695")+theme_bw()+stat_poly_line(se=T,col="#313695") +
+  stat_cor(size = 4,cor.coef.name = "r")+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+xlab("Enrichment score of IFN gamma signaling pathways")+ylab("Expression PD-L1")
+
+p3<-ggplot(data=GSVA_targetedcombined,aes(x=CD274,y=TCR_signaling))+geom_point( size=2.5,alpha=0.5,col="#313695")+theme_bw()+stat_poly_line(se=T,col="#313695") +
+  stat_cor(size = 4,cor.coef.name = "r")+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ylab("Enrichment score of T-cell receptor signaling pathways")+xlab("Expression of PD-L1")
+p4<-ggplot(data=GSVA_targetedcombined,aes(y=CNIH4,x=CD274))+geom_point( size=2.5,alpha=0.5,col="#313695")+theme_bw()+stat_poly_line(se=T,col="#313695") +
+  stat_cor(size = 4,cor.coef.name = "r")+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ylab("Expression of CNIH4")+xlab("Expression of PD-L1")
+p5<-ggplot(data=GSVA_targetedcombined,aes(y=log2_Lymphocyte_counts,x=TCR_signaling))+geom_point( size=2.5,alpha=0.5,col="#313695")+theme_bw()+stat_poly_line(se=T,col="#313695") +
+  stat_cor(size = 4,cor.coef.name = "r")+theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ylab("Lymphocyte [log2 counts]")+xlab("Enrichment score of T-cell receptor signaling pathways")
+
+# png(file=paste0(path_output_2,"/Figure_3A_Asociation_between_important_factors.png"), wi = 16, he = 12,units = 'in', res = 480)
+# cowplot::plot_grid(p1,p2,p3,p4,p5, nrow = 2)
+# dev.off()
+```
+
+
+### Mediation analysis:
+
+1: Mtb burden--> IFN signaling pathway --> PD-L1 pathway
+
+```{r}
+library(CMAverse)
+
+dat_test<-GSVA_targetedcombined %>% na.omit() 
+
+# # model 1: regression_based method  for linear regresion model
+# res_rb_param_bootstrap <- cmest(data = data, model = "rb", outcome = "Y", exposure = "A",
+#                                 mediator = "M", basec = c("C1", "C2"), EMint = FALSE,
+#                                 mreg = list("logistic"), yreg = "logistic",
+#                                 astar = 0, a = 1, mval = list(1), 
+#                                 estimation = "paramfunc", inference = "bootstrap", nboot = 2)
+# 
+# res_rb <- cmest(data = dat_test, model = "rb", outcome = "TCR_signaling", exposure = "CD274", mediator = "CNIH4",basec = c("Age"), EMint = FALSE,
+#                    mreg = list("linear"), yreg = "linear", 
+#                   astar = 0, a = 1, mval = list(1), 
+#                   estimation = "paramfunc", inference = "bootstrap", nboot = 2000)
+# summary(res_rb)$summarydf
+# 
+# # model 2: The Natural Effect Model for linear regresion model
+# res_ne <- cmest(data = dat_test, model = "rb", outcome = "TCR_signaling", exposure = "CD274",
+#                 mediator = "CNIH4", basec = c("Age"), EMint = FALSE,
+#                 ereg = "linear",mreg = list("linear"),  yreg = "linear",
+#                 astar = 0, a = 1, mval = list(1), 
+#                 estimation = "imputation", inference = "bootstrap", nboot = 1000)
+# summary(res_ne)$summarydf
+
+# Model 3: The g-formula approach for linear regresion model
+set.seed(1)
+res_gformula <- cmest(data = dat_test, model = "gformula", outcome = "CD274",exposure = "log2_CT",
+                      mediator = "IFN_gamma", basec =  c("Age"), EMint = FALSE,
+                      mreg = list("linear"), yreg = "linear",multimp = TRUE,
+                      astar = 0, a = 1, mval = list(1), 
+                      estimation = "imputation", inference = "bootstrap", nboot = 3000)
+
+summary(res_gformula)$summarydf
+
+
+
+mediated_res<-summary(res_gformula)$summarydf[c("tnde","tnie","te","pm"),] 
+mediated_res$Effect<-rownames(mediated_res)
+
+mediated_res %<>%  mutate(Effect=case_when(Effect=="tnde"~"Natural direct impact",
+                                                         Effect=="tnie"~"Natural indirect impact",
+                                                         Effect=="te"~"Total impact",
+                                                         .default ="Proportion Mediated"
+                                                         )) %>% 
+                    mutate(Effect=factor(Effect,levels=c("Natural direct impact","Natural indirect impact","Total impact","Proportion Mediated"))) 
+  
+save(res_gformula,mediated_res,file=paste0(path_output_1,"mediation_Mtb_IFN_gamma_signaling_PD_L1.Rdata"))
+knitr::kable(mediated_res)
+```
+
+
+2: PD-L1 --> CNIH4--> T-cell receptor signaling pathways
+
+```{r}
+# # model 1: regression_based method  for linear regresion model
+# res_rb_param_bootstrap <- cmest(data = data, model = "rb", outcome = "Y", exposure = "A",
+#                                 mediator = "M", basec = c("C1", "C2"), EMint = FALSE,
+#                                 mreg = list("logistic"), yreg = "logistic",
+#                                 astar = 0, a = 1, mval = list(1), 
+#                                 estimation = "paramfunc", inference = "bootstrap", nboot = 2)
+# 
+# res_rb <- cmest(data = dat_test, model = "rb", outcome = "TCR_signaling", exposure = "CD274", mediator = "CNIH4",basec = c("Age"), EMint = FALSE,
+#                    mreg = list("linear"), yreg = "linear", 
+#                   astar = 0, a = 1, mval = list(1), 
+#                   estimation = "paramfunc", inference = "bootstrap", nboot = 2000)
+# summary(res_rb)$summarydf
+# 
+# # model 2: The Natural Effect Model for linear regresion model
+# res_ne <- cmest(data = dat_test, model = "rb", outcome = "TCR_signaling", exposure = "CD274",
+#                 mediator = "CNIH4", basec = c("Age"), EMint = FALSE,
+#                 ereg = "linear",mreg = list("linear"),  yreg = "linear",
+#                 astar = 0, a = 1, mval = list(1), 
+#                 estimation = "imputation", inference = "bootstrap", nboot = 1000)
+# summary(res_ne)$summarydf
+
+# Model 3: The g-formula approach for linear regresion model
+set.seed(1)
+res_gformula <- cmest(data = dat_test, model = "gformula", outcome = "TCR_signaling",exposure = "CD274",
+                      mediator = "CNIH4", basec =  c("Age"), EMint = FALSE,
+                      mreg = list("linear"), yreg = "linear",multimp = TRUE,
+                      astar = 0, a = 1, mval = list(1), 
+                      estimation = "imputation", inference = "bootstrap", nboot = 3000)
+
+summary(res_gformula)$summarydf
+
+
+
+mediated_res<-summary(res_gformula)$summarydf[c("tnde","tnie","te","pm"),] 
+mediated_res$Effect<-rownames(mediated_res)
+
+mediated_res %<>%  mutate(Effect=case_when(Effect=="tnde"~"Natural direct impact",
+                                                         Effect=="tnie"~"Natural indirect impact",
+                                                         Effect=="te"~"Total impact",
+                                                         .default ="Proportion Mediated"
+                                                         )) %>% 
+                    mutate(Effect=factor(Effect,levels=c("Natural direct impact","Natural indirect impact","Total impact","Proportion Mediated"))) 
+  
+save(res_gformula,mediated_res,file=paste0(path_output_1,"/mediation_PDl1_CNIH4_TCR.Rdata"))
+knitr::kable(mediated_res)
+```
+
+
+
+
+3: PD-L1 --> T-cell receptor signaling pathway --> lymphopenia
+
+```{r}
+# # model 1: regression_based method  for linear regresion model
+# res_rb_param_bootstrap <- cmest(data = data, model = "rb", outcome = "Y", exposure = "A",
+#                                 mediator = "M", basec = c("C1", "C2"), EMint = FALSE,
+#                                 mreg = list("logistic"), yreg = "logistic",
+#                                 astar = 0, a = 1, mval = list(1), 
+#                                 estimation = "paramfunc", inference = "bootstrap", nboot = 2)
+# 
+# res_rb <- cmest(data = dat_test, model = "rb", outcome = "TCR_signaling", exposure = "CD274", mediator = "CNIH4",basec = c("Age"), EMint = FALSE,
+#                    mreg = list("linear"), yreg = "linear", 
+#                   astar = 0, a = 1, mval = list(1), 
+#                   estimation = "paramfunc", inference = "bootstrap", nboot = 2000)
+# summary(res_rb)$summarydf
+# 
+# # model 2: The Natural Effect Model for linear regresion model
+# res_ne <- cmest(data = dat_test, model = "rb", outcome = "TCR_signaling", exposure = "CD274",
+#                 mediator = "CNIH4", basec = c("Age"), EMint = FALSE,
+#                 ereg = "linear",mreg = list("linear"),  yreg = "linear",
+#                 astar = 0, a = 1, mval = list(1), 
+#                 estimation = "imputation", inference = "bootstrap", nboot = 1000)
+# summary(res_ne)$summarydf
+
+# Model 3: The g-formula approach for linear regresion model
+set.seed(1)
+res_gformula <- cmest(data = dat_test, model = "gformula", outcome ="log2_Lymphocyte_counts",exposure = "CD274",
+                      mediator = "TCR_signaling", basec =  c("Age"), EMint = FALSE,
+                      mreg = list("linear"), yreg = "linear",multimp = TRUE,
+                      astar = 0, a = 1, mval = list(1), 
+                      estimation = "imputation", inference = "bootstrap", nboot = 3000)
+
+summary(res_gformula)$summarydf
+
+
+
+mediated_res<-summary(res_gformula)$summarydf[c("tnde","tnie","te","pm"),] 
+mediated_res$Effect<-rownames(mediated_res)
+
+mediated_res %<>%  mutate(Effect=case_when(Effect=="tnde"~"Natural direct impact",
+                                                         Effect=="tnie"~"Natural indirect impact",
+                                                         Effect=="te"~"Total impact",
+                                                         .default ="Proportion Mediated"
+                                                         )) %>% 
+                    mutate(Effect=factor(Effect,levels=c("Natural direct impact","Natural indirect impact","Total impact","Proportion Mediated"))) 
+  
+save(res_gformula,mediated_res,file=paste0(path_output_1,"mediation_PDl1_TCR_lymphopenia.Rdata"))
+knitr::kable(mediated_res)
+```
+
+
+
+
+
+
+### Association between the IFN gamma and bacterial load
+
+```{r}
+load(file="Raw_data/gene_clini_adjusted_ComBat_all.Rdata")
+load(file="Raw_data/clinical_data_HC_PTB_TBM.RData")
+load(file="Raw_data/Data_26_27_CT_CNIH4.Rdata.RData")
+
+dat<-gene_clini_all %>% filter(Study%in%c("43TB","28TB","29TB"))
+
+GSVA_targeted <- gsva(t(dat[,-c(1:5)]),gset.idx.list=targeted_pathways,method="ssgsea",mx.diff=T,BPPARAM=MulticoreParam(12))
+GSVA_targeted<-as.data.frame(t(GSVA_targeted))
+
+GSVA_targetedcombined<-merge(dat,GSVA_targeted,by='row.names')
+GSVA_targetedcombined<-merge(subset(clinical_RNA,select=c("LIMS_ID","log2_CT")),GSVA_targetedcombined,by='LIMS_ID',all.y=T)
+
+GSVA_targetedcombined %<>% dplyr::select(Row.names,"Study","log2_CT","CNIH4","IFNG","CD274",colnames(GSVA_targeted))
+GSVA_targetedcombined %<>% mutate(log2_CT=ifelse(Study=="43TB", log2(51),log2_CT)) 
+# p1<-ggplot(data=subset(GSVA_targetedcombined,log2_CT<log2(50)),aes(x=log2_CT,y=IFN_gamma))+geom_point( size=2.5,alpha=0.5,col="#313695")+theme_bw()+stat_poly_line(se=T,col="#313695") +
+#   stat_cor(size = 4,cor.coef.name = "r",label.x=-5)+
+#   stat_boxplot(data=subset(GSVA_targetedcombined,log2_CT>log2(50)),aes(x=log2(50),y=IFN_gamma), color="#08519c",geom = "errorbar",size=0.5)+
+#   geom_boxplot(data=subset(GSVA_targetedcombined,log2_CT>log2(50)),aes(x=log2(50),y=IFN_gamma), color="#08519c",size=1,fill='white')+
+#   geom_jitter(data=subset(GSVA_targetedcombined,log2_CT>log2(50)),aes(x=log2(50),y=IFN_gamma),width =0.1,color="#2ca25f",size=2.5,alpha=0.5)+scale_x_reverse()+theme(plot.title = element_text(size = 15),
+#         legend.position = "none",
+#         axis.text = element_text(size = 15),
+#         axis.text.x=element_text(color="black",size=13,face="bold"),
+#         axis.title.x = element_text(size = 15,color="black",face="bold"),
+#         axis.text.y=element_text(color="black",size=15),
+#         axis.title.y = element_text(size = 15,color="black",face="bold"),
+#         legend.text = element_text(size = 15),
+#         legend.title = element_text( colour="black", size=12),
+#         legend.key = element_rect(colour = NA),
+#         strip.text=element_text(face = "bold",size=12))+ylab("Enrichment score of IFN gamma signaling pathways")+xlab("Mtb Xpert Ct value")
+GSVA_targetedcombined %<>% mutate(Status=ifelse(Study=="43TB","Heathly control","PTB")) 
+p1.2<-ggplot(GSVA_targetedcombined, aes(x = Status, y = IFN_gamma)) +
+  geom_boxplot(size=1,position=position_dodge(1),width=0.7,
+               fill="white",outlier.colour="red", 
+               outlier.shape=NA,outlier.size=3)+
+  geom_jitter(aes(fill=Status,colour=Status),width=0.2, height=0,size=2,alpha = 0.5)+
+  scale_color_manual(values=c("#00441b","#313695"))+
+  theme_bw()+
+  labs(x="Disease",y = "Enrichment score of IFN gamma signaling pathways")+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+
+  stat_compare_means(aes(label = paste0("p = ", ..p.format..)), size = 4,label.x = 1.5, label.y = 2.3)+scale_x_discrete("",labels = c("Healthy" = "Healthy",
+                                   "PTB" = "PTB"))
+
+```
+
+
+```{r}
+png(file=paste0(path_output_2,"/Figure_3A_Asociation_between_Mtb_burden_IFN_gamma.png"), wi = 12, he = 10,units = 'in', res = 480)
+cowplot::plot_grid(p1.2,p1,p2,p3,p4,p5, nrow = 2)
+dev.off()
+```
+
+

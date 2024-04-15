@@ -51,13 +51,14 @@ library(flextable)
 library(pheatmap)
 library(ggplot2)
 library(ggplotify)
-```
-
-```{r}
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
 path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Triet_Results")
+```
+
+```{r}
+
 
 load(paste0(path_input,"/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")) #vst_data 295 31425
 load(paste0(path_input,"/Raw_data/vst_Gensymbol_allTBM_281Sample_12Jan24.RData")) #tbm_vst 281 31381
@@ -83,8 +84,14 @@ TOM1 <- as.matrix(TOM)
 colnames(TOM1) <- colnames(multiExpr[[1]]$data)
 rownames(TOM1) <- colnames(multiExpr[[1]]$data)
 
-clinical_2_discovery <- filter(clinical_2,cohort=='Discovery')
+clinical_2_discovery <- filter(clinical_2, cohort=='Discovery')
 rownames(clinical_2_discovery) <- clinical_2_discovery$LIMS_ID
+
+
+###------ImputeCIBERSORT------###
+impute_df <-  read.csv(paste0(path_input,'/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt'),sep='\t') %>% filter(P.value<0.05)
+rownames(impute_df) <- impute_df$Mixture
+impute_df$Mixture <- NULL
 ```
 
 ```{r}
@@ -99,6 +106,27 @@ PTB_TBM_ComBat %<>% mutate(CNIH4level=ifelse((CNIH4<qt[1]),1,2))
 
 vst_ptb_tbm <- merge(vst_ptb_tbm,PTB_TBM_ComBat %>% select('LIMS_ID','CNIH4level'),by="LIMS_ID")
 rownames(vst_ptb_tbm) <- vst_ptb_tbm$LIMS_ID
+```
+
+```{r}
+healthy_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,trial_number=='HV'|trial_number=='43TB')$LIMS_ID)
+qt<-quantile(healthy_df$CNIH4,c(0.75)) #Q3 CNIH4 of healthy control
+
+PTB_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,trial_number=='MDR_PTB'|trial_number=='DS_PTB')$LIMS_ID)
+
+# tmp <- PTB_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),"LOW",'HIGH'))
+
+tmp <- PTB_df %>% select(CNIH4) %>% mutate(level=ifelse((CNIH4<qt[1]),1,2))
+
+rownames(tmp) <- PTB_df$LIMS_ID
+table(tmp$level) # 244 52
+vst_data2<-merge(vst_data,tmp[,2, drop=FALSE],by=0)
+rownames(vst_data2) <- vst_data2$LIMS_ID
+dim(vst_data2) # 295 31427
+```
+
+```{r}
+PTB_TBM_ComBat
 ```
 
 ## 2. Helper functions
@@ -213,7 +241,8 @@ color.bar <- function(lut, min, max=-min, nticks=11, ticks=seq(min, max, len=nti
 IC_names<-c('CD200', 'CD2','CD58','TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
              'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
              'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
-             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9','CNIH4')
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9',
+            'TMED9','TGFA','GLI1','CNIH4')
 ICvsCNIH4_df <- vst_data %>% select(IC_names)
 ICvsCNIH4_df <- ICvsCNIH4_df[vapply(ICvsCNIH4_df, 
                                     function(x) length(unique(x)) > 1, 
@@ -255,4 +284,930 @@ p01
 row.order <- p01$tree_row$order
 col.order <- p01$tree_col$order
 p1 <- as.ggplot(p01)
+```
+
+### 3.2.0. Custom
+
+```{r}
+
+df <- vst_data %>%select('CNIH4','TGFA')
+
+p1<-ggplot(data=df, aes(x=CNIH4,y=TGFA))+
+  geom_point(alpha=0.2,col='red')+
+  theme_bw()+
+  stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7,method = 'spearman')+
+  theme_bw()+ 
+  ylab(paste0(as.name(colnames(df)[i])," expression"))+
+  xlab("CNIH4 expression")+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+p1
+```
+
+### 3.2. Scatter plot CNIH4 vs 27 ICs
+
+```{r}
+library(ggpmisc)
+library(ggpubr)
+library(cowplot)
+
+IC_names<-c('CD200', 'CD2','CD58','TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
+             'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
+             'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9','CNIH4')
+df <- vst_data %>%select(IC_names) %>% dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
+         'CD274/PDL1'='CD274',
+         'LGALS9/Galactin-9'='LGALS9',
+         'PDCD1/PD1'='PDCD1'
+         ) #295 patients
+
+p<-list()
+
+for(i in 1:27){
+p1<-ggplot(data=df, aes_string(x='CNIH4',y=as.name(colnames(df)[i])))+
+  geom_point(alpha=0.2,col='red')+
+  theme_bw()+
+  stat_poly_line(se=T) +
+  stat_cor(cor.coef.name = "r",size = 7,method = 'spearman')+
+  theme_bw()+ 
+  ylab(paste0(as.name(colnames(df)[i])," expression"))+
+  xlab("CNIH4 expression")+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+  p[[i]]<-ggdraw(p1)
+  ggdraw(p1)
+}
+
+#png(file=paste0(path_output,"/Figure4B_scatterplot_CNIH4vsICs_all_PTB.png"),res=600, units = 'in', width=45, height =30)#30:18
+ggpubr::ggarrange(
+p[[1]],p[[2]],
+p[[3]],p[[4]],
+p[[5]],p[[6]],
+p[[7]],p[[8]],
+p[[9]],p[[10]],
+p[[11]],p[[12]],
+p[[13]],p[[14]],
+p[[15]],p[[16]],
+p[[17]],p[[18]],
+p[[19]],p[[20]],
+p[[21]],p[[22]],
+p[[23]],p[[24]],
+p[[25]],p[[26]],
+p[[27]],
+ncol =6,nrow=5)
+#dev.off()
+```
+
+### 3.3. Hurdles Model PTB vs TBM vs PCR
+
+```{r}
+{r}
+library(brms)
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+library(tidybayes)
+library(broom)
+library(dplyr)
+library(ggplot2)
+library(broom.mixed)
+
+options(mc.cores = 1, brms.backend = "cmdstanr")
+
+CHAINS <- 4
+ITER <- 2000
+WARMUP <- 1000
+BAYES_SEED <- 1234
+
+# Create a custom family that is logit if y = 0, normal/gaussian if not
+hurdle_gaussian <- custom_family("hurdle_gaussian", 
+                dpars = c("mu", "sigma", "hu"),
+                links = c("identity", "log", "logit"),
+                lb = c(NA, 0, NA),
+                type = "real")
+
+# Stan code
+stan_funs <- "
+  real hurdle_gaussian_lpdf(real y, real mu, real sigma, real hu) { 
+    if (y == 0) { 
+      return bernoulli_lpmf(1 | hu); 
+    } else { 
+      return bernoulli_lpmf(0 | hu) +  
+             normal_lpdf(y | mu, sigma); 
+    } 
+  }
+"
+# Prepare Stan code for use in brm()
+stanvars <- stanvar(scode = stan_funs, block = "functions")
+#set_cmdstan_path('C:/Users/triettm/AppData/Local/R/win-library/4.3/.cmdstan/cmdstan-2.33.1')
+set_cmdstan_path('C:/Users/triettm/OneDrive - Oxford University Clinical Research Unit/Documents/.cmdstan/cmdstan-2.34.0')
+```
+
+#### 3.3.1. CNIH4 vs Ct value in PTB patients
+
+#### 3.3.2. CNIH4 vs Ct value in TBM patients
+
+#### 3.3.3. CNIH4 vs Ct value in PCR patients
+
+### 3.4. Deconvolution Analysis
+
+#### 3.4.1. CIBERSORT Cell pops
+
+```{r}
+library(ggpubr)
+library(rstatix)
+
+healthy_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID %in% filter(Cli_All,trial_number=='HV'|trial_number=='43TB')$LIMS_ID)
+rownames(healthy_df) <- healthy_df$LIMS_ID
+
+PTB_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,trial_number=='MDR_PTB'|trial_number=='DS_PTB')$LIMS_ID)
+rownames(PTB_df) <- PTB_df$LIMS_ID
+
+TBM_df <- count_data_adjusted_ComBat %>% filter(LIMS_ID%in%filter(Cli_All,(trial_number=='26TB'|trial_number=='27TB')&(Timepoint=='D0'))$LIMS_ID)
+rownames(TBM_df) <- TBM_df$LIMS_ID
+
+tmp1 <- merge(impute_df,healthy_df,by=0) %>% select(B.cells.naive:Neutrophils)
+dim(tmp1)
+tmp1 <- pivot_longer(tmp1,B.cells.naive:Neutrophils)
+tmp1$group <- rep('Healthy',each=dim(tmp1)[1])
+
+tmp2 <- merge(impute_df,PTB_df,by=0) %>% select(B.cells.naive:Neutrophils)
+dim(tmp2)
+tmp2 <- pivot_longer(tmp2,B.cells.naive:Neutrophils)
+tmp2$group <- rep('PTB',each=dim(tmp2)[1])
+
+tmp3 <- merge(impute_df,TBM_df,by=0) %>% select(B.cells.naive:Neutrophils)
+dim(tmp3)
+tmp3 <- pivot_longer(tmp3,B.cells.naive:Neutrophils)
+tmp3$group <- rep('TBM',each=dim(tmp3)[1])
+
+
+
+tmp<-rbind(tmp1,tmp2,tmp3)
+
+stat.test <- tmp %>%
+  group_by(name) %>% 
+  t_test(value ~ group) %>% 
+  add_significance("p") %>%
+  add_xy_position(x = "name")
+
+p <- ggplot(data=tmp,
+       aes(x=name,y=value, color=factor(group, level = c('Healthy','PTB','TBM'))))+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),
+             alpha=0.1)+
+  scale_color_manual(values=c("#81A1C1","#B48EAD","#A3BE8C"))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('% Cell population')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold")) +
+  stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
+
+# png(file=paste0(path_output,"/Figure_CellPop_HealthyvsPTBvsTBM.png"),res=900, units = 'in', width=17, height = 9)
+# p
+# dev.off()
+```
+
+#### 3.4.2. CIBERSORT CNIH4
+
+```{r}
+impute_df
+```
+
+```{r}
+df <- filter(vst_ptb_tbm,Type=='PTB') %>% select(c('LIMS_ID','CNIH4level'))
+
+tmp <- merge(impute_df,df,by=0) %>% select(c(B.cells.naive:Neutrophils,CNIH4level))
+tmp <- pivot_longer(tmp,B.cells.naive:Neutrophils)
+
+# p<-ggplot(data=tmp,
+#        aes(x=name,y=value))+
+#   geom_boxplot(aes(color=name)) +
+#   geom_jitter(height=0,aes(color=name),alpha=0.1)+
+#   xlab('Cell type')+
+#   ylab('% Cell population')+
+#   theme_bw()+
+#   theme(plot.title = element_text(size = 25),
+#         legend.position = "",
+#         legend.text = element_text(size = 20) ,
+#         legend.title  = element_text(size = 20,color="black",face="bold"),
+#         axis.text = element_text(size = 25),
+#         axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+#         axis.title.x = element_text(size = 20,color="black",face="bold"),
+#         axis.text.y=element_text(color="black",size=20),
+#         axis.title.y = element_text(size = 20,color="black",face="bold"),
+#         axis.title= element_text(size = 40,color="black",face="bold"))
+#   
+# png(file=paste0(path_output,"/Figure_CellPop_All.png"),res=900, units = 'in', width=14, height = 9)
+# p
+# dev.off()
+
+stat.test <- tmp %>%
+  group_by(name) %>% 
+  t_test(value ~ CNIH4level) %>% 
+  add_significance("p") %>%
+  add_xy_position(x = "name")
+
+p <- ggplot(data=tmp,
+       aes(x=name,y=value, color=factor(CNIH4level, level = c('LOW','HIGH'))))+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),
+             alpha=0.1)+
+  scale_color_manual(values=c("#81A1C1","#B48EAD"))+
+  labs(color='CNIH4 Level')+ 
+  xlab('Cell type')+
+  ylab('% Cell population')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold")) +
+  stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
+p
+```
+
+#### 3.4.2. BayesPrism
+
+#### 3.4.2.1. Cell Proportion
+
+```{r}
+bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy.rdata")))
+bp.res_ptb <- get(load(file=paste0(path_input,"Data/bp.res_ptb.rdata")))
+bp.res_tbm <- get(load(file=paste0(path_input,"Data/bp.res_tbm.rdata")))
+```
+
+```{r}
+get_theta <- function(bp) {
+  theta <- get.fraction (bp=bp,
+            which.theta="final",
+            state.or.type="type")
+  theta <- as.data.frame(theta)
+  row.names(theta) <- gsub("X", "", row.names(theta))
+  row.names(theta) <- gsub("_PBMC", "", row.names(theta))
+  theta <- theta[ order(row.names(theta)), ]
+  theta$Lymphocyte <- theta$B + theta$CD4T + theta$CD8T + theta$NK
+  return(theta)
+}
+```
+
+```{r}
+library(rstatix)
+library(ggpubr)
+
+id26TB <- All_sample_RNAseq %>% subset(Study %in% c("26TB") & timepoint=='D0') %>% select('LIMS_ID')
+id27TB <- All_sample_RNAseq %>% subset(Study %in% c("27TB") & timepoint=='D0') %>% select('LIMS_ID')
+
+theta1 <- get_theta(bp.res_ptb)
+theta2 <- get_theta(bp.res_tbm)
+theta2_1 <- theta2[id26TB$LIMS_ID,]
+theta2_2 <- theta2[id27TB$LIMS_ID,]
+theta3 <- get_theta(bp.res_healthy)
+
+
+tmp1 <- pivot_longer(theta1,CD8T:Neutrophil)
+tmp1$group <- rep('PTB',each=dim(tmp1)[1])
+tmp2<- pivot_longer(theta2,CD8T:Neutrophil)
+tmp2$group <- rep('TBM',each=dim(tmp2)[1])
+
+tmp2_1<- pivot_longer(theta2_1,CD8T:Neutrophil)
+tmp2_1$group <- rep('TBM (HIV+)',each=dim(tmp2_1)[1])
+tmp2_2<- pivot_longer(theta2_2,CD8T:Neutrophil)
+tmp2_2$group <- rep('TBM (HIV-)',each=dim(tmp2_2)[1])
+
+tmp3 <- pivot_longer(theta3,CD8T:Neutrophil)
+tmp3$group <- rep('Healthy',each=dim(tmp3)[1])
+tmp<-rbind(tmp1,tmp2_1,tmp2_2,tmp3)
+
+stat.test <- tmp %>%
+  group_by(name) %>% 
+  t_test(value ~ group) %>% 
+  add_significance("p") %>%
+  add_xy_position(x = "name")
+stat.test
+
+
+p <- ggplot(data=tmp,
+       aes(x=name,
+           y=value,
+           color=factor(group, level = c('Healthy','PTB','TBM (HIV+)','TBM (HIV-)'))))+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3,jitter.height =0),
+             alpha=0.1)+
+  scale_color_manual(values=c("#A3BE8C","#81A1C1","#B48EAD","#D08770"))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('% Cell population')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))+
+  stat_compare_means(
+    method= "wilcox.test",
+    aes(label = after_stat(p.signif)),
+                     tip.length = 0.1,
+                     bracket.size = 0.3,
+                     step.increase = 0.5,
+                     position=position_jitter(width = 0, height = 0.5),
+    )
+  # stat_pvalue_manual(stat.test, label = 'p.signif', 
+  #                    tip.length = 0.01,
+  #                    step.increase = 0,
+  #                    vjust=0,
+  #                    size=3.88, 
+  #                    #y.position = c(0.9, 1, 0.9),
+  #                    bracket.shorten = 0)
+p
+
+tmp %>% summarise(wilcox.p = wilcox.test(value ~ group, exact = FALSE))
+
+tmp %>% 
+  group_by(gene.name) %>% 
+  summarise(p=wilcox.test(value~group)$p.value)
+
+table(tmp$group)
+
+tmp %>% group_by(name) %>% summarise(p=wilcox.test(value,group))
+
+
+wilcox.test(filter(tmp, group=='PTB' & name=='Neutrophil')$value, 
+            filter(tmp, group=='TBM (HIV+)' & name=='Neutrophil')$value, paired=FALSE)
+pairwise.wilcox.test(Ozone, Month)
+
+
+attach(airquality)
+Month <- factor(Month, labels = month.abb[5:9])
+## These give warnings because of ties :
+pairwise.wilcox.test(tmp$name.tmp$group)
+pairwise.wilcox.test(Ozone, Month, p.adjust.method = "bonf")
+detach()
+
+pairwise.wilcox.test(tmp$value,tmp$group)
+
+
+
+tmp %>% stat_compare_means(method= "wilcox.test")
+    
+aes(label = after_stat(p.signif)),
+                     tip.length = 0.1,
+                     bracket.size = 0.3,
+                     step.increase = 0.5,
+    position=position_dodge(0.9)
+```
+
+#### 3.4.2.2. CNIH4 Expression Estimation
+
+```{r}
+get_z_vst <- function(bp,gene) {
+  z <- get.exp(bp=bp, state.or.type="type")
+  tmp <- vst(round(t(z[,,'Neutrophil'])),
+             blind=T,
+             nsub=dim(z[,,'Neutrophil'])[1],
+             fitType='mean') %>% t() %>% as.data.frame()
+  df <- data.frame(Neutrophil = tmp[,gene])
+  cell_list <- c('CD8T', 'Monocyte','CD4T', 'B', 'NK', 'Neutrophil')
+  
+  for(i in 1:length(cell_list)){
+    c <- cell_list[i]
+    print(c)
+    tmp <- vst(round(t(z[,,c])),blind=T,nsub=dim(z[,,'Neutrophil'])[1]) %>% t() %>% as.data.frame()
+    df[,c] <- tmp[,gene]
+  }
+  return(df)
+}
+
+zptb_cnih4 <- get_z_vst(bp.res_ptb,'CNIH4')
+ztbm_cnih4 <- get_z_vst(bp.res_tbm,'CNIH4')
+zh_cnih4 <- get_z_vst(bp.res_healthy,'CNIH4')
+```
+
+```{r}
+
+tmp1 <- pivot_longer(zptb_cnih4,Neutrophil:NK)
+tmp1$group <- rep('PTB',each=dim(tmp1)[1])
+tmp2<- pivot_longer(ztbm_cnih4,Neutrophil:NK)
+tmp2$group <- rep('TBM',each=dim(tmp2)[1])
+tmp3 <- pivot_longer(zh_cnih4,Neutrophil:NK)
+tmp3$group <- rep('Healthy',each=dim(tmp3)[1])
+tmp<-rbind(tmp1,tmp2,tmp3)
+
+stat.test <- tmp %>%
+  group_by(name) %>% 
+  t_test(value ~ group) %>% 
+  add_significance("p") %>%
+  add_xy_position(x = "name")
+
+p <- ggplot(data=tmp,
+       aes(x=name,
+           y=value,
+           color=factor(group, level = c('Healthy','PTB','TBM'))))+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),
+             alpha=0.1)+
+  scale_color_manual(values=c("#81A1C1","#B48EAD","#A3BE8C"))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('CNIH4 Z Estimation')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))+
+  stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
+```
+
+#### 3.4.2.3. PD-L1 Expression Estimation
+
+```{r}
+z <- get.exp(bp=bp.res_ptb, state.or.type="type")
+tmp <- vst(round(t(z[,,'Neutrophil'])),
+           blind=T,
+           nsub=dim(z[,,'Neutrophil'])[1],
+           fitType='mean') %>% t() %>% as.data.frame()
+df <- data.frame(Neutrophil = tmp[,'CD274'])
+```
+
+```{r}
+zptb_cd274 <- get_z_vst(bp.res_ptb,'CD274')
+ztbm_cd274 <- get_z_vst(bp.res_tbm,'CD274')
+zh_cd274 <- get_z_vst(bp.res_healthy,'CD274')
+```
+
+```{r}
+
+tmp1 <- pivot_longer(zptb_cd274,Neutrophil:NK)
+tmp1$group <- rep('PTB',each=dim(tmp1)[1])
+tmp2<- pivot_longer(ztbm_cnih4,Neutrophil:NK)
+tmp2$group <- rep('TBM',each=dim(tmp2)[1])
+tmp3 <- pivot_longer(zh_cnih4,Neutrophil:NK)
+tmp3$group <- rep('Healthy',each=dim(tmp3)[1])
+tmp<-rbind(tmp1,tmp2,tmp3)
+
+stat.test <- tmp %>%
+  group_by(name) %>% 
+  t_test(value ~ group) %>% 
+  add_significance("p") %>%
+  add_xy_position(x = "name")
+
+p <- ggplot(data=tmp,
+       aes(x=name,
+           y=value,
+           color=factor(group, level = c('Healthy','PTB','TBM'))))+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),
+             alpha=0.1)+
+  scale_color_manual(values=c("#81A1C1","#B48EAD","#A3BE8C"))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('CNIH4 Z Estimation')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))+
+  stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
+```
+
+#### 3.4.2.4. ssGSEA for group + celltype
+
+```{r}
+library(GSVA)
+library(BiocParallel)
+library(ReactomeContentService4R)
+library(msigdbr)
+library(ggpmisc)
+
+get_genelist_pathway_kegg <- function(hsa_ID){
+  library("KEGGREST")
+  names <- keggGet(hsa_ID)[[1]]$GENE
+  namesodd <-  names[seq(0,length(names),2)]
+  namestrue <- gsub("\\;.*","",namesodd)
+}
+
+#T cell receptor signaling pathway - Homo sapiens (human)
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660")
+
+get_ssgsea <- function(bp.res){
+  num_samples <- dim(bp.res@prism@mixture)[1]
+  TCR_signaling_df <- data.frame()
+  TCR_signaling_df[1:num_samples,]=NA
+  for (i in 1:6){
+  cellname = bp.res@prism@map[[i]] #"Neutrophil"
+  z <- get.exp(bp=bp.res,
+               state.or.type="type",
+               cell.name = cellname
+               )
+  GSVA_targeted <- gsva(t(z), gset.idx.list=list(TCR_signaling=TCR_signaling),method="ssgsea",mx.diff=T)
+  GSVA_targeted<-as.data.frame(t(GSVA_targeted))
+  TCR_signaling_df[,cellname] = GSVA_targeted$TCR_signaling
+  }
+  rownames(TCR_signaling_df) <- rownames(GSVA_targeted)
+  TCR_signaling_df <- TCR_signaling_df[,c('B','CD4T','CD8T','NK','Neutrophil','Monocyte')]
+  return(TCR_signaling_df)
+}
+
+
+TCRsig_df_ptb <- get_ssgsea(bp.res = bp.res_ptb)
+TCRsig_df_healthy <- get_ssgsea(bp.res = bp.res_healthy)
+TCRsig_df_tbm <- get_ssgsea(bp.res = bp.res_tbm)
+
+TCRsig_df_long_ptb <- pivot_longer(TCRsig_df_ptb,B:Monocyte)
+TCRsig_df_long_healthy <- pivot_longer(TCRsig_df_healthy,B:Monocyte)
+TCRsig_df_long_tbm <- pivot_longer(TCRsig_df_tbm,B:Monocyte)
+
+TCRsig_df_long_ptb$group <- rep('PTB',each=dim(TCRsig_df_long_ptb)[1])
+TCRsig_df_long_healthy$group <- rep('Healthy',each=dim(TCRsig_df_long_healthy)[1])
+TCRsig_df_long_tbm$group <- rep('TBM',each=dim(TCRsig_df_long_tbm)[1])
+
+tmp<-rbind(TCRsig_df_long_healthy,TCRsig_df_long_ptb,TCRsig_df_long_tbm)
+
+stat.test <- tmp %>%
+  group_by(name) %>% 
+  t_test(value ~ group) %>% 
+  add_significance("p") %>%
+  add_xy_position(x = "name")
+stat.test
+
+p <- ggplot(data=tmp,
+       aes(x=name,
+           y=value,
+           color=factor(group, level = c('Healthy','PTB','TBM'))))+
+  geom_boxplot() +
+  #scale_y_continuous( log_trans())+
+  geom_point(position=position_jitterdodge(jitter.width =0.3,jitter.height =0),
+             alpha=0.1)+
+  scale_color_manual(values=c("#A3BE8C","#81A1C1","#B48EAD"))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('Enrichment score of T-cell receptor signaling pathways')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))+
+  stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
+  # stat_compare_means(
+  #   method= "wilcox.test",
+  #   aes(label = after_stat(p.signif)),
+  #                    tip.length = 0.1,
+  #                    bracket.size = 0.3,
+  #                    step.increase = 0.5,
+  #                    position=position_jitter(width = 0, height = 0.5),
+  #   )
+
+p
+p <- ggplot(data=TCR_signaling_df_long,aes(x=name,
+                                           y=value,
+                                           color=factor(name)))+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =1.5,jitter.height =0),
+             alpha=0.1)+
+  scale_color_manual(values=c("#A3BE8C","#81A1C1","#88C0D0","#B48EAD","#D08770","#BF616A"))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('Enrichment score of T-cell receptor signaling pathways')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"))
+  # stat_pvalue_manual(stat.test, label = 'p.signif', 
+  #                    tip.length = 0.01,
+  #                    step.increase = 0,
+  #                    vjust=0,
+  #                    size=3.88, 
+  #                    #y.position = c(0.9, 1, 0.9),
+  #                    bracket.shorten = 0)
+p
+```
+
+### 3.5. DESEQ2 Analysis
+
+```{r}
+library(EnhancedVolcano)
+library(comprehenr)
+
+df <- filter(vst_ptb_tbm,Type=='PTB') %>% select(c('LIMS_ID','CNIH4level'))
+PTB_sample_RNAseq <- All_sample_RNAseq %>% subset(Study %in% c("28TB","29TB"))
+count_data <-count_all[,rownames(PTB_sample_RNAseq)]
+count_data<-count_data[ , !(names(count_data) %in% c('HOA7818A92'))] # drop 1 patients not in vst
+
+df<- df[order(df$LIMS_ID),] #col
+df$CNIH4level<-factor(df$CNIH4level,levels=c(1,2))
+df$LIMS_ID<-NULL
+
+count_data<-count_data[ , order(names(count_data))]
+anno_symbol <- anno[,c("gene_id", "gene_symbol")] %>% filter(gene_id %in% rownames(count_data))
+rownames(anno_symbol) <- anno_symbol$gene_id
+anno_symbol <- anno_symbol[rownames(count_data),]
+count_data <- cbind(genenames=anno_symbol$gene_symbol,count_data)
+count_data <-count_data %>% filter(genenames %in% names(RNA_data) & genenames!='CNIH4')
+
+count_data$genenames<-NULL
+anno_symbol <- anno[,c("gene_id", "gene_symbol")] %>% filter(gene_id %in% rownames(count_data))
+
+dup_genes_id <- anno_symbol[duplicated(anno_symbol$gene_symbol), ]$gene_id
+count_data <- count_data[!(rownames(count_data) %in% dup_genes_id),]
+
+dds <- DESeqDataSetFromMatrix(count_data, colData=df, ~CNIH4level)
+dds <- DESeq(dds)
+
+#results(dds, contrast=c("condition","C","B")) meaning genes with:
+#logFC > 0 are overexpressed in C and underexpressed in B.
+#logFC < 0 means underexpressed in C and overexpressed in B
+
+res1 <- results(dds,contrast=c('CNIH4level',2,1),alpha=0.05)
+#res2 <- lfcShrink(dds, coef= 'CNIH4level_2_vs_1', type="apeglm")
+summary(res1)
+
+labels <- mapvalues(rownames(res1), 
+          from=anno_symbol$gene_id, 
+          to=anno_symbol$gene_symbol)
+
+EnhancedVolcano(res1,
+    lab = labels,
+    x = 'log2FoldChange',labSize = 2.0,
+    pCutoff = 0.05,
+    FCcutoff = log2(1.5),
+    y = 'padj',)
+
+get_DEGgenes <- function(df,reg){
+    if(reg=='high'){
+      key <- intersect(rownames(df)[which(df$log2FoldChange>=log2(1.5))], rownames(df)[which(df$padj<0.05)])
+    }
+    if(reg=='low'){
+      key <- intersect(rownames(df)[which(df$log2FoldChange<=-log2(1.5))], rownames(df)[which(df$padj<0.05)])
+    }
+    results <- as.data.frame((df)[which(rownames(df) %in% key),])
+    return(results)
+}
+
+deg_high <- rownames(get_DEGgenes(as.data.frame(res1),reg='high'))
+deg_low <- rownames(get_DEGgenes(as.data.frame(res1),reg='low'))
+
+deg_high <- to_vec(for(i in 1:length(deg_high)) filter(anno_symbol,gene_id==deg_high[i])$gene_symbol)
+deg_low <- to_vec(for(i in 1:length(deg_low)) filter(anno_symbol,gene_id==deg_low[i])$gene_symbol)
+```
+
+### 3.6. Pathway Analysis
+
+```{r}
+ORA_bar_plot <- function(df,name,n=5){
+  n <- min(nrow(df),n)
+  df <- df[1:n,]
+  #n_break <- as.integer(max(df$log_pvalue))
+  p <- ggplot(aes(x= ID,y = log_pvalue),data =df) + 
+  geom_col(position = "stack", 
+           alpha = 0.5,fill="#4292c6") +
+  geom_text(aes(x=ID,y=0.1,label =ID), 
+            size=3,fontface='bold',hjust=0)+
+  ggtitle(name)+
+  #geom_text(aes(x=ID,y=pos,label =log_pvalue), hjust=0.5) +
+  #scale_y_continuous(breaks = 1:n_break)+ 
+  coord_flip()+
+  labs(x="", y="Log10 P value") +
+  #scale_fill_manual(values=c("#4292c6")) +
+  theme_bw()+
+  theme(plot.title = element_text(size = 20),
+        legend.text = element_text(size = 15) ,
+        legend.position="right",
+        legend.title = element_text(size = 13,color="black",face="bold"),
+        axis.text.x=element_text(color="black",size=13),
+        axis.title.x = element_text(size = 13,color="black",face="bold"),
+        axis.text.y=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_text(size = 13,color="black",face="bold"))
+  
+  #p
+  return(p)
+}
+```
+
+```{r}
+library(msigdbr)
+library(dplyr)
+library(clusterProfiler)
+# db <- msigdbr(species = "Homo sapiens", category = "H") %>%
+#   dplyr::select(gs_name, human_gene_symbol)
+#C5, C8
+
+# db <- msigdbr(species = "Homo sapiens", category = "C5") %>%
+#   filter(gs_subcat=="GO:BP") %>% #C5
+#   dplyr::select(gs_name, human_gene_symbol)
+
+db <- msigdbr(species = "Homo sapiens", category = "C8") %>%
+  dplyr::select(gs_name, human_gene_symbol)
+
+dim(db)
+
+ORA_analysis <- function(gene_list){
+  temp <- enricher(gene_list, TERM2GENE=db, pvalueCutoff = 1, qvalueCutoff = 1)
+  temp <- temp@result
+  if(!is.na(table(temp$p.adjust < padj)["TRUE"]) &  table(temp$p.adjust < padj)["TRUE"]>10){
+    temp <- temp %>% filter(p.adjust<padj) %>%
+    dplyr::arrange(pvalue)
+    } 
+  else{
+    temp <- temp %>%
+    dplyr::arrange(pvalue)
+    temp <- temp[1:min(nrow(temp),10),]
+    }
+  # df <- temp %>%
+  # dplyr::arrange(pvalue) %>%
+  # dplyr::mutate(log_pvalue=-log10(pvalue),
+  #               pos = ifelse(log_pvalue <4,log_pvalue + 1,log_pvalue + 0.5))
+  # ORA_bar_plot(df)
+  return(temp)
+}
+
+ora_low <- ORA_analysis(deg_low)
+df1 <- ora_low %>%
+  dplyr::arrange(pvalue) %>%
+  dplyr::mutate(log_pvalue=-log10(pvalue),
+                pos = ifelse(log_pvalue <4,log_pvalue + 1,log_pvalue + 0.5))
+p1<-ORA_bar_plot(df1,'Genes down-regulated in high CNIH4')
+p1
+ora_high <- ORA_analysis(deg_high)
+df2 <- ora_high %>%
+  dplyr::arrange(pvalue) %>%
+  dplyr::mutate(log_pvalue=-log10(pvalue),
+                pos = ifelse(log_pvalue <4,log_pvalue + 1,log_pvalue + 0.5))
+p2<-ORA_bar_plot(df1,'Genes up-regulated in high CNIH4')
+
+
+n = 5
+df1 <- df1[1:min(nrow(df1),n),] %>% mutate(group='downregulated genes') %>% arrange(ID)
+df2 <- df2[1:min(nrow(df2),n),] %>% mutate(group='upregulated genes') %>% arrange(ID)
+df <- rbind(df1,df2)
+df$ID <- factor(df$ID, levels = df$ID)
+
+#n_break <- as.integer(max(df$log_pvalue))
+p <- ggplot(data =df,aes(x= ID,y = log_pvalue,fill=group)) + 
+  geom_col(position = 'stack',
+         alpha = 0.5,
+         aes(x=ID,y = log_pvalue,
+             fill = group)) +
+scale_fill_manual( values = c('#5E81AC','#BF616A'))+
+geom_text(aes(x=ID,y=0.1,label =ID), 
+          size=3,fontface='bold',hjust=0)+
+#geom_text(aes(x=ID,y=pos,label =log_pvalue), hjust=0.5) +
+#scale_y_continuous(breaks = 1:n_break)+ 
+coord_flip()+
+labs(x="", y="Log10 P value") +
+#scale_fill_manual(values=c("#4292c6")) +
+theme_bw()+
+theme(plot.title = element_text(size = 20),
+      legend.text = element_text(size = 15) ,
+      legend.position="right",
+      legend.title = element_text(size = 13,color="black",face="bold"),
+      axis.text.x=element_text(color="black",size=13),
+      axis.title.x = element_text(size = 13,color="black",face="bold"),
+      axis.text.y=element_blank(),
+      axis.ticks.y = element_blank(),
+      axis.title.y = element_text(size = 13,color="black",face="bold"))
+p
+```
+
+### 3.7. Isoforms Correlation Analysis
+
+```{r}
+write.csv(salmons12,'ptb_CNIH4_CD274_salmon_vst.csv',row.names = TRUE)
+```
+
+```{r}
+salmons <- read.csv(paste0(path_input,'/Data/ptb_CNIH4_CD274_salmon_counts.csv'))
+
+salmons12 <- salmons %>% filter(Run=='1+2') %>% tibble::column_to_rownames('transcript_name') %>% select(colnames(salmons)[8:dim(salmons)[2]]) %>% t()
+
+salmons12 <- as.data.frame(vst(round(salmons12),blind=T, nsub=295))
+salmons12 <- merge(salmons12,vst_data,by=0) %>% select(c(colnames(salmons12),'CT_mean'))
+
+```
+
+```{r}
+library(grid)
+a <- ifelse(colnames(salmons12) %in% c('CNIH4-201','CNIH4-202','CNIH4-203','CNIH4-205', 'CD274-201','CD274-202'), "red", "black")
+p01$gtable$grobs[[5]]$gp=gpar(col=a)
+p01
+```
+
+```{r}
+cor_method = 'pearson'
+mat <- cor(salmons12,
+                      use='pairwise.complete.obs',
+                      method = cor_method)
+
+p.mat <- cor.pval.test(salmons12, 
+                                  salmons12, 
+                                  method=cor_method, 
+                                  use='pairwise.complete.obs')
+
+#col=c("#001164", 'white', "#FF681E")
+#col=c("#5E81AC", '#EBCB8B', "#BF616A")
+col=c("#395b85", 'white', "#FF681E")
+# CNIH4 vs 25 ICs
+mat1 <- mat
+p.mat1 <- p.mat
+labels1 <-round(mat1,2)
+vals1 <- labels1
+vals1[p.mat1 > 0.05] <- 0
+labels1[p.mat1 > 0.05] <- ''
+
+myBreaks <- c(seq(-1, 0, length.out=ceiling(1000/2) + 1),
+              seq(1/1000, 1, length.out=floor(1000/2)))
+
+p01 <- pheatmap(vals1,
+               color = colorRampPalette(col)(1000),
+               breaks=myBreaks,
+               display_numbers=labels1,
+               show_colnames = F,legend = F)
+p01
+row.order <- p01$tree_row$order
+col.order <- p01$tree_col$order
+p1 <- as.ggplot(p01)
+```
+
+### 3.8. AUC
+
+```{r}
+ptb_ct40 <- vst_data %>% select(c('LIMS_ID','CNIH4','CT_mean')) %>% filter(CT_mean==40)
+tbm_ct40 <- Data_26_27_CT %>% mutate(CT_mean=NAT) %>% select(c('LIMS_ID','CNIH4','CT_mean')) %>% filter(CT_mean==40)
+row.names(tbm_ct40) <- tbm_ct40$LIMS_ID
+ptb_tbm_ct40 <- rbind(ptb_ct40,tbm_ct40)
+
+
+healthy <- healthy_df %>% select(c('LIMS_ID','CNIH4'))
+write.csv(ptb_tbm_ct40,'ptb_tbm_ct40_CNIH4.csv',row.names = FALSE)
+write.csv(healthy,'healthy_CNIH4.csv',row.names = FALSE)
+```
+
+# Draft
+
+```{r}
+colnames(salmon12)
 ```

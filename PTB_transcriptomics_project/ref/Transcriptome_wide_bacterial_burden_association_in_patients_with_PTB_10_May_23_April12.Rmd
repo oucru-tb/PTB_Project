@@ -1,0 +1,976 @@
+---
+title: "Transcriptome-wide bacterial burden association in patients with PTB"
+author: "Nhat Le"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(parallel)
+mcore<-12
+# mcore<-1# for Window PC
+#Load libraries
+library(dplyr)
+library(readxl)
+library(writexl)
+library(survival)
+library(glmnet)
+library(stabs)
+library(tidyverse)
+library(magrittr)
+library(Hmisc)
+library(gtsummary)
+library(WGCNA)
+library(ggcorrplot)
+library(scales)
+library(gridExtra)
+library(ggcorrplot)
+library(broom)
+library(rms)
+library(tidyverse)
+library("stabs")
+library("mboost")
+library(DESeq2)
+library(CEMiTool)
+
+###--- Set Directory ---###
+local_dir<-getwd()
+setwd(local_dir)
+###------Import clinical and clean RNAseq and PCR data------###
+load(file="Data/Most_variance_RNA_genes.Rdata")
+load(file="Data/Fluidigm_PTB_data.Rdata")
+# Output Link
+path_output<-"Results"
+path_output_1<-"Results/Derive_results"
+path_output_2<-"Results/Figures_Tables"
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# Import raw RNA_seq data, do the do the stabilizing variance transformation, and select the top 10000 with high variances genes
+path_input_RNA <- "Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"
+lnames <- load(path_input_RNA)
+
+## load clinical data from the meta data
+All_sample_RNAseq <- readxl::read_excel("Raw_data/All_sample_RNAseq.xlsx",sheet = "Run1and2") %>% as.data.frame()
+rownames(All_sample_RNAseq) <- All_sample_RNAseq$LIMS_ID
+
+## check clinical data and count data 
+all(rownames(All_sample_RNAseq) %in% colnames(count_all))
+dim(All_sample_RNAseq)## 1276 samples
+
+## Extract only the data for PTB cohort (28,29TB)
+PTB_sample_RNAseq <- All_sample_RNAseq %>% subset(Study %in% c("28TB","29TB"))
+count_data <-count_all[,rownames(PTB_sample_RNAseq)]
+
+## create anno data
+anno_symbol <- anno[,c("gene_id", "gene_symbol")] %>% filter(gene_id %in% rownames(count_data))
+rownames(anno_symbol) <- anno_symbol$gene_id
+anno_symbol <- anno_symbol[rownames(count_data),]
+## add gene symbol to count data
+count_data <- cbind(genenames=anno_symbol$gene_symbol,count_data)
+## Some genes have multiple segments that map to one gene. Thus, the counts of that gene is the sum of all the segments counts of that genes
+count_deseq2 <- count_data %>%
+                group_by(genenames) %>%
+                summarise_all(sum) %>%
+                data.frame()
+rownames(count_deseq2) <- count_deseq2$genenames
+
+count_deseq2 %<>% dplyr::select(-genenames)
+
+## filter low expressed genes
+filter_min_group <- ncol(count_deseq2)/5
+## filter for gene expression of 10 counts in more than 20% sample
+filter_gene <- apply(count_deseq2, 1, function(x) length(x[x>10]) >= filter_min_group) 
+count_deseq2 <- count_deseq2[filter_gene,] %>% as.matrix()
+
+## normalize vst by deseq2
+PTB_sample_RNAseq %<>% mutate(Study=factor(Study))
+dds <- DESeqDataSetFromMatrix(count_deseq2, colData=PTB_sample_RNAseq, ~ Study)
+# rownames(dds)
+# dds_anno <- anno_gene_symbol(data = dds,data_anno = anno,export = F,name = NULL)
+vsd <- assay(vst(dds, blind=T)) # Variance stablized transform with log transform
+vsd_t<-vsd %>% t() %>%
+ as.data.frame() %>%
+ tibble::rownames_to_column(var='LIMS_ID') %>%
+ as.data.frame()
+
+RNA_data<-vsd_t %>% select(-LIMS_ID)
+rownames(RNA_data)<-vsd_t$LIMS_ID
+
+## Method 1:  Using variance_based filtering method to filter gene most variance
+
+RNA_data_transpose <- as.data.frame(t(RNA_data))
+RNA_data_transpose_filtered <- filter_genes(RNA_data_transpose,pct =.75) #.75
+# Selected genes
+selected <- select_genes(RNA_data_transpose_filtered,filter_pval=0.35) #0.35
+
+# ## Method 2:  Using the top 10000 genes as the most variance
+# dv <- NULL
+# dv$Symbols <- colnames(RNA_data)
+# dv$variance <- matrixStats::colVars(as.matrix(RNA_data))
+# dv <- as.data.frame(dv)
+# ## sorting gene by var
+# dv <- dv[order(dv$variance, decreasing = TRUE),]
+# 
+# 
+# RNA_data$LIMS_ID<-vsd_t$LIMS_ID
+# selected <- dv$Symbols[1:10000] #method 2 choose 10000 genes most variant
+
+RNA_data <- RNA_data[,selected]
+RNA_data$LIMS_ID<-vsd_t$LIMS_ID
+
+####----Check the level of expression between two batches----###
+expr_normalized_df <- data.frame(RNA_data) %>%
+  pivot_longer(cols=RN7SL1:ZNF876P)
+expr_normalized_df<-plyr::join_all(list(expr_normalized_df,PTB_sample_RNAseq)) %>% 
+                    mutate(seq_Batch=factor(seq_Batch))
+
+
+expr_normalized_df %>% ggplot(., aes(x = seq_Batch, y = value)) +
+  geom_violin() +
+  geom_jitter(width = 0.1,alpha=0.1,size=1) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text( angle = 90)
+  ) +
+  ylim(0, NA) +
+  labs(
+    title = "Normalized and 95 quantile Expression",
+    x = "treatment",
+    y = "normalized expression"
+  )+ theme(plot.title = element_text(hjust = 0.5))->p
+
+png(file=paste0(path_output,"/Gene_expression_after_normalized_by_study.png"),
+    res=400, units = 'in', width = 10, height =5)
+p
+dev.off()
+
+####--------------------------------------------------------------------####
+
+gene_names_full<-colnames(RNA_data)
+gene_names_full<-gsub("-","_",gene_names_full)
+colnames(RNA_data)<-gene_names_full
+
+###---- Import PCR Fluidigm data ----###
+path_input_Fluidigm <- "Raw_data/Fluidigm_PTB_wide_2Jan2023.RData"
+load(path_input_Fluidigm)
+Fluidigm_PTB_wide %<>% as.data.frame() %>% dplyr::rename("Patient_ID"="studycode")
+Patient_Fluidigm_PTB<-Fluidigm_PTB_wide$Patient_ID
+###----------------------------------###
+
+## Import clinical data for RNA_seq and for PCR data
+path_input_clinical<-"Raw_data/Clinical full data 913 patients.csv"
+clinical <- read_csv(path_input_clinical)%>% as.data.frame()
+####-----Clinical data---####
+clinical_2<-clinical %>% select("studycode","DiagnosisAge","Gender","bmi","Timika.score","Diabetes","Cavity","Lung.proportion","CT_Xpert_mean","LIMS_ID","HGB","WBC","NEUTLE","LYMLE","MONOLE","EOSLE","PLAT","DUR","study","TBTreatedBefore","GenXpert.f") %>% 
+  mutate("Treatment_sensitive"=ifelse(study=="28TB","MDR","DS")) %>% 
+  dplyr::rename("Patient_ID"="studycode",
+                "Neutrophil"="NEUTLE",
+                "Lymphocyte"="LYMLE",
+                "Monocyte"="MONOLE",
+                "Eosinophil"="EOSLE",
+                "Platelet"="PLAT",
+                "Symptom_duration"="DUR",
+                "Lung_proportion"="Lung.proportion",
+                "Age"="DiagnosisAge",
+                "Timika_score"="Timika.score",
+                "TB_History"="TBTreatedBefore",
+                "GenXpert_catgry"="GenXpert.f"
+                )
+
+clinical_2 %<>% mutate(Neutrophil_counts=WBC*Neutrophil*0.01,
+                     log2_Neutrophil_counts=log2(Neutrophil_counts),
+                     Lymphocyte_counts=WBC*Lymphocyte *0.01,
+                     log2_Lymphocyte_counts=log2(Lymphocyte_counts),
+                     Monocyte_counts=WBC*Monocyte*0.01,
+                     log2_Monocyte_counts=log2(Monocyte_counts),
+                     Eosinophil_counts=WBC*Eosinophil*0.01,
+                     log2_Eosinophil_counts=log2(Eosinophil_counts),
+                     log2_Symptom_duration=log2(Symptom_duration+1),
+                     log2_Platelet_counts =log2(Platelet),
+                     log2_CT=log2(CT_Xpert_mean))
+
+# Remove one patient with RNA_seq quality low
+clinical_2%<>% filter(!is.na(LIMS_ID)&LIMS_ID!="HOA7818A92"|Patient_ID%in%Patient_Fluidigm_PTB)
+
+clinical_RNA_PTB <- clinical_2 %>% filter(!is.na(LIMS_ID)) %>% as.data.frame()
+
+clinical_Fluidigm_PTB <- clinical_2 %>% filter(Patient_ID%in%Patient_Fluidigm_PTB) %>% as.data.frame()
+
+# Here we only combine the 295 patients who have good RNA_seq quality
+clinical_RNA<-merge(RNA_data,clinical_RNA_PTB,by="LIMS_ID")
+RNA_data<-clinical_RNA[,gene_names_full]
+rownames(RNA_data)<-rownames(clinical_RNA)<-clinical_RNA$LIMS_ID
+
+# Here we only combine the 190 patients who have good PCR Fluidigm quality
+clinical_Fluidigm<-merge(Fluidigm_PTB_wide,clinical_Fluidigm_PTB,by="Patient_ID")
+
+
+clinical_2 %<>% mutate(cohort=ifelse(Patient_ID%in%Patient_Fluidigm_PTB,"Validation","Discovery"))
+
+save(Fluidigm_PTB_wide,clinical_2,clinical_Fluidigm,file="Data/Fluidigm_PTB_data.Rdata")
+save(RNA_data,clinical_RNA,clinical_2,file="Data/Most_variance_RNA_genes.Rdata")
+```
+
+# Patient characteristics of discovery and validation cohort
+
+```{r echo=FALSE}
+clinical_RNA%<>% as.data.frame() %>% mutate(log2_CT=log2(CT_Xpert_mean))
+datExpr0<-datExpr<-RNA_data %>% select(-LIMS_ID)
+gene_names_full<-colnames(datExpr)
+```
+
+
+```{r echo=FALSE}
+splitting_set_size <- 0.5
+set.seed(1234) #4650
+n<-nrow(clinical_RNA_PTB)
+index_set_1 <- sample (1:n, floor(splitting_set_size * nrow(clinical_RNA_PTB)), replace=F)
+index_set_2<-(1:n)[!(1:n%in%index_set_1)]
+clinical_tmp<-clinical_RNA_PTB %>% select("Age","Gender","bmi","Treatment_sensitive","TB_History","Symptom_duration","Diabetes",
+                             "CT_Xpert_mean","HGB","WBC","Neutrophil_counts","Lymphocyte_counts","Monocyte_counts","Eosinophil_counts",
+                              "Timika_score","Cavity","Lung_proportion")
+set_1_set  <- clinical_tmp[index_set_1,] 
+set_2_set  <- clinical_tmp[index_set_2,]
+
+# Overview patient characteristics to see if the characteristics are distributed equally
+set_1_set$Set <- 'Train set'
+set_2_set$Set <- 'Test set'
+
+PTB_sets <- rbind(set_1_set, set_2_set) %>% 
+  mutate(Set=factor(Set,levels=c('Train set','Test set')))
+
+table <- PTB_sets %>% 
+  tbl_summary(
+    by = Set, # split table by group
+    missing = "ifany", # don't list missing data separately,
+    label = list( Age~"Age [year]",
+                  bmi~"BMI [kg/m2]",
+                  TB_History~"TB History",
+                  Symptom_duration~"Symptom duration (days)",
+                  Diabetes~"Diabetes Metilus",
+                  CT_Xpert_mean~"GeneXpert mean Ct value",
+                  HGB~ "Hemoglobin (g/dl)", ## HGB
+                  WBC~"Total white blood cell counts (G/L)",
+                  Neutrophil_counts~"Neutrophil count (G/L)",
+                  Lymphocyte_counts~"Lymphocyte count (G/L)",
+                  Monocyte_counts~"Monocyte count (G/L)",
+                  Eosinophil_counts~"Eosinophil count (G/L)",
+                  Timika_score~"Chest X-ray Timika score",
+                  Cavity~"Chest Xray Cavity",
+                  Lung_proportion~"Lung proportion damage (%)"
+                )
+  ) %>%
+  add_n() %>% # add column with total number of non-missing observations
+  add_p() %>% # test for a difference between groups
+  modify_header(label = "**Variable**") %>% # update the column header
+  bold_labels()
+table
+```
+
+## Overview: 
+
+- We only focus on the top 10000 gene most variant. Those lower would be removed from the analysis. The results we chose this large cut-off because we dont want to missed signal from the small variant gene but huge impact on the bacterial burden. However, extreme small variant unliky to infuence on the bacterial burden rather than noise. And we also want to remove those noise.
+
+- GAMs fitted using GCV smoothness selection can suffer from under-smoothing. This can happen where the GCV profile is relative flat and random variation can lead to the algorithm converging at too wiggly a fit. Fitting via REML (use method = "REML" in the gam() call) or ML has been shown by Simon Wood and colleagues to be much more robust to under smoothing, but at computational expense. The above summaries are based on the descriptions in Simon Wood's rather excellent book on GAMs: Wood, S. N. (2006). Generalized Additive Models: An Introduction with R. Chapman and Hall/CRC
+
+- In this analysis, we defined the signal genes are those with top variances and associated with phenotype with p.value <0.05 and the R_sq>0.04
+
+- We're primarily interested in both linear and non-linear patterns of bacterial burden with respect to the gene expression levels. Therefore, we used the general form (non-linear univariate analysis) to detect the signal genes.
+
+- We splitted the data into two indenpendt cohorts: set_1 and set_2 sets: We peform the same procedure of ranking and then take the common top-hit genes.
+
+- We further investigate the network analysis (WGCNA analysis) to investigate the potential cluster of genes which regulates the host responses to control the bacterial burden.
+
+## Pre-screeing signals from both cohorts
+
+```{r eval=FALSE, include=FALSE}
+## Step 1: Pre-screening signal genes (gene with p<0.05 and R2>0.04 ) regardless linear or non-linear associations using the whole data set.
+## We use the method "REML" for a more robust smoothness selection.
+signal_genes<-c()
+# Null model
+f0<-mgcv::gam(log2_CT~1,data=clinical_RNA[index_set_1,c(gene_names_full,"log2_CT")],family="gaussian",method="REML")
+Rsq_adj<-df<-c()
+for(i in gene_names_full){
+  f<-formula(paste0("~ s(",i,")"))
+  sum_f<-summary(update(f0,f))
+  if((sum_f$s.table[,"p-value"]<0.05)&(sum_f$r.sq>0.04)){
+    signal_genes<-c(signal_genes,i)
+    Rsq_adj<-c(Rsq_adj,unname(sum_f$r.sq))
+  }
+}
+R_sq<-data.frame(signal_genes=signal_genes,Rsq_adj=Rsq_adj) %>% arrange(desc(Rsq_adj))
+# save(signal_genes,R_sq,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/signal_genes_discovery.Rdata")
+# load(file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/signal_genes_discovery.Rdata")
+save(signal_genes,R_sq,file="Data/signal_genes_discovery.Rdata")
+```
+
+```{r eval=FALSE, include=FALSE}
+## Step 1: Pre-screening signal genes (gene with signal ) regardless linear or non-linear associations using the whole data set.
+signal_genes<-c()
+f0<-mgcv::gam(log2_CT~1,data=clinical_RNA[index_set_2,c(gene_names_full,"log2_CT")],family="gaussian",method="REML")
+Rsq_adj<-df<-c()
+for(i in gene_names_full){
+  f<-formula(paste0("~ s(",i,")"))
+  sum_f<-summary(update(f0,f))
+  if((sum_f$s.table[,"p-value"]<0.05)&(sum_f$r.sq>0.04)){
+    signal_genes<-c(signal_genes,i)
+    Rsq_adj<-c(Rsq_adj,unname(sum_f$r.sq))
+  }
+}
+R_sq<-data.frame(signal_genes=signal_genes,Rsq_adj=Rsq_adj) %>% arrange(desc(Rsq_adj))
+# save(signal_genes,R_sq,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/signal_genes_validation.Rdata")
+# load(file="Data/signal_genes_validation.Rdata")
+save(signal_genes,R_sq,file="Data/signal_genes_validation.Rdata")
+```
+
+### Step 1: Ranking signal genes with criteria (150-1500) and selecting top-hit genes on set_1 set.
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+load(file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/signal_genes_discovery.Rdata")
+set.seed(123)
+B <- 2000
+m<-ceiling(floor(splitting_set_size * nrow(clinical_RNA))*2/3)
+gene_names<-signal_genes
+branks<-as.data.frame(matrix(0,ncol=length(gene_names),nrow=B))
+colnames(branks) <- gene_names
+R2<-branks
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(matrixStats)
+R2_compute<-function(data=data,gene_names=gene_names,variables_names=variables_names){
+  #Parallel computing
+  f0<-mgcv::gam(log2_CT~1,data,family="gaussian",method="REML")
+  l<-mclapply(1:length(gene_names),function(i){
+    summary(update(f0,formula(paste0("~ s(",gene_names[i],")"))))$r.sq
+    },mc.cores = 12)
+  return(unlist(l))
+}
+
+for(k in 1:B) {
+  index <- sample(index_set_1, m, replace=F)
+  bR2<- R2_compute(data=clinical_RNA[index,],
+                    gene_names=gene_names,
+                    variables_names=c("log2_CT"))
+  names(bR2)<-gene_names
+  R2[k,]<-bR2
+  branks[k,]<-order(sort(bR2,decreasing = T,index.return=T)$ix)
+  print(k)
+}
+file_names<-paste0("Data/correlation_set_1_set_",gsub("-","_", Sys.Date()),".Rdata")
+save(branks,R2,file=file_names)
+```
+
+#### Re-sampling ranking based on the estimate R_sq of genes on Gene-Xpert Ct value on discovery set.
+
+```{r fig.height=10, fig.width=10, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+load(file="Data/correlation_set_1_set_2023_07_16.Rdata")
+
+gene_names<-colnames(branks)
+branks<-as.matrix(branks)
+branks_sum<-matrixStats::colQuantiles(branks,probs = c(0.025,0.975,0.5)) %>% as.data.frame()
+branks_sum$means_ranks<-colMeans(branks)
+
+branks_sum<-as.data.frame(branks_sum) %>% arrange(means_ranks)
+names(branks_sum)[1:3]<-paste0("rank-",colnames(branks_sum[,1:3]))
+branks_sum$gene_names<-rownames(branks_sum)
+
+branks_sum %>%
+  mutate(name = reorder(gene_names, dplyr::desc(`rank-97.5%`))) %>%
+  ggplot( aes(x=name, y=`rank-50%`)) +
+    geom_point(col="red") +
+  geom_errorbar(aes(ymin = `rank-2.5%`, ymax = `rank-97.5%`,alpha=0.01))+
+  theme_classic()+
+  theme(axis.text.y = element_blank())+
+  geom_hline(yintercept =c(50,500), linetype = 'dashed', color= 'red',size=1)+
+    coord_flip() +
+    xlab("") +
+    theme_bw()+ theme(legend.position="none")+ylab("Rank of  genes")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Bi-directional ranking
+") +  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))->p1
+
+R2<-as.matrix(R2)
+R2_sum<-matrixStats::colQuantiles(R2,probs = c(0.025,0.975,0.5)) %>% as.data.frame()
+R2_sum$means_R2<-colMeans(R2)
+
+R2_sum<-as.data.frame(R2_sum) %>% arrange(means_R2)
+names(R2_sum)[1:3]<-paste0("R2-",colnames(R2_sum[,1:3]))
+R2_sum$gene_names<-rownames(R2_sum)
+
+R2_sum<-merge(R2_sum,branks_sum,by="gene_names")
+R2_sum %>%
+  mutate(name = reorder(gene_names, dplyr::desc(`rank-97.5%`))) %>%
+  ggplot( aes(x=name, y=`R2-50%`)) +
+    geom_point(col="red") +
+  geom_errorbar(aes(ymin = `R2-2.5%`, ymax = `R2-97.5%`,alpha=0.01))+
+  theme_classic()+
+  theme(axis.text.y = element_blank())+
+    coord_flip() +
+    xlab("") +
+    theme_bw()+ theme(legend.position="none")+ylab("R2")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Bi-directional ranking
+") +  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))->p2
+R2_sum_set_1_set<-R2_sum %<>%  arrange((`rank-50%`))
+save(R2_sum_set_1_set,file="Data/R2_sum_set_1.Rdata")
+```
+
+### Step 2: Ranking signal genes with criteria (150-1500) and selecting top-hit genes on set_2 set.
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+load(file="Data/signal_genes_validation.Rdata")
+set.seed(123)
+B <- 2000
+m<-ceiling(floor(splitting_set_size * nrow(clinical_RNA))*2/3)
+gene_names<-signal_genes
+branks<-as.data.frame(matrix(0,ncol=length(gene_names),nrow=B))
+colnames(branks) <- gene_names
+R2<-branks
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(matrixStats)
+R2_compute<-function(data=data,gene_names=gene_names,variables_names=variables_names){
+  #Parallel computing
+  f0<-mgcv::gam(log2_CT~1,data,family="gaussian",method="REML")
+  l<-mclapply(1:length(gene_names),function(i){
+    summary(update(f0,formula(paste0("~ s(",gene_names[i],")"))))$r.sq
+    },mc.cores = 12)
+  return(unlist(l))
+}
+
+for(k in 1:B) {
+  index <- sample(index_set_2, m, replace=F)
+  bR2<- R2_compute(data=clinical_RNA[index,],
+                    gene_names=gene_names,
+                    variables_names=c("log2_CT"))
+  names(bR2)<-gene_names
+  R2[k,]<-bR2
+  branks[k,]<-order(sort(bR2,decreasing = T,index.return=T)$ix)
+  print(k)
+}
+file_names<-paste0("Data/correlation_set_2_set_",gsub("-","_", Sys.Date()),".Rdata")
+save(branks,R2,file=file_names)
+```
+
+#### Re-sampling ranking based on the estimate HR of genes on two-month mortality on validation set.
+
+```{r fig.height=10, fig.width=10, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+load(file="Data/correlation_set_2_set_2023_07_16.Rdata")
+gene_names<-colnames(branks)
+branks<-as.matrix(branks)
+branks_sum<-matrixStats::colQuantiles(branks,probs = c(0.025,0.975,0.5)) %>% as.data.frame()
+branks_sum$means_ranks<-colMeans(branks)
+
+branks_sum<-as.data.frame(branks_sum) %>% arrange(means_ranks)
+names(branks_sum)[1:3]<-paste0("rank-",colnames(branks_sum[,1:3]))
+branks_sum$gene_names<-rownames(branks_sum)
+
+branks_sum %>%
+  mutate(name = reorder(gene_names, dplyr::desc(`rank-97.5%`))) %>%
+  ggplot( aes(x=name, y=`rank-50%`)) +
+    geom_point(col="red") +
+  geom_errorbar(aes(ymin = `rank-2.5%`, ymax = `rank-97.5%`,alpha=0.01))+
+  theme_classic()+
+  theme(axis.text.y = element_blank())+
+  geom_hline(yintercept =c(50,500), linetype = 'dashed', color= 'red',size=1)+
+    coord_flip() +
+    xlab("") +
+    theme_bw()+ theme(legend.position="none")+ylab("Rank of  genes")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Bi-directional ranking
+") +  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))->p1
+
+R2<-as.matrix(R2)
+R2_sum<-matrixStats::colQuantiles(R2,probs = c(0.025,0.975,0.5)) %>% as.data.frame()
+R2_sum$means_R2<-colMeans(R2)
+
+R2_sum<-as.data.frame(R2_sum) %>% arrange(means_R2)
+names(R2_sum)[1:3]<-paste0("R2-",colnames(R2_sum[,1:3]))
+R2_sum$gene_names<-rownames(R2_sum)
+
+R2_sum<-merge(R2_sum,branks_sum,by="gene_names")
+R2_sum %>%
+  mutate(name = reorder(gene_names, dplyr::desc(`rank-97.5%`))) %>%
+  ggplot( aes(x=name, y=`R2-50%`)) +
+    geom_point(col="red") +
+  geom_errorbar(aes(ymin = `R2-2.5%`, ymax = `R2-97.5%`,alpha=0.01))+
+  theme_classic()+
+  theme(axis.text.y = element_blank())+
+    coord_flip() +
+    xlab("") +
+    theme_bw()+ theme(legend.position="none")+ylab("R2")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=12),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))+ggtitle("Bi-directional ranking
+") +  theme(plot.title = element_text(hjust = 0.5,face="bold", colour="black", size=20))->p2
+R2_sum_set_2_set<-R2_sum %<>%  arrange((`rank-50%`))
+save(R2_sum_set_2_set,file="Data/R2_sum_set_2.Rdata")
+```
+
+### Combine signals from the two independent sets
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+load(file="Data/R2_sum_set_1.Rdata")
+load(file="Data/R2_sum_set_2.Rdata")
+
+R2_sum_set_1_set %<>% mutate(select=ifelse((`rank-2.5%`<=50 & `rank-97.5%`<=500 & `R2-50%`>0.04),"yes","no")) 
+R2_sum_set_2_set %<>% mutate(select=ifelse((`rank-2.5%`<=50 & `rank-97.5%`<=500 & `R2-50%`>0.04),"yes","no")) 
+
+top_hit_set_1_signal<-R2_sum_set_1_set$gene_names[R2_sum_set_1_set$select=="yes"]
+top_hit_set_2_signal<-R2_sum_set_2_set$gene_names[R2_sum_set_2_set$select=="yes"]
+
+(common_list<-top_hit_set_1_signal[top_hit_set_1_signal%in%top_hit_set_2_signal])
+a<-cbind(gene_names=common_list)
+
+write.table(a,file="Data/top_hit.txt",quote = F,row.names = F)
+
+R2_sum_set_1_set_tophit<-R2_sum_set_1_set %>% filter(select=="yes") %>% mutate(Set="Discovery set") %>% as.data.frame()
+R2_sum_set_2_set_tophit<-R2_sum_set_2_set %>% filter(select=="yes") %>% mutate(Set="Validation set")%>% as.data.frame()
+
+R2_top_hit<-rbind(R2_sum_set_1_set_tophit,R2_sum_set_2_set_tophit) %>% mutate(validated_signal=ifelse(gene_names%in%common_list,"yes","no"))
+save(R2_top_hit,file="Data/R2_top_hit.Rdata")
+save(common_list,file="Data/common_list.Rdata")
+```
+
+
+#### Forest-plots of top-hit genes
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+load(file="Data/R2_top_hit.Rdata")
+```
+
+```{r echo=FALSE, fig.height=30, fig.width=30, message=FALSE, warning=FALSE, paged.print=FALSE}
+p1<-R2_top_hit %>% mutate(name = reorder(gene_names, dplyr::desc(`rank-50%`))) %>% filter(validated_signal=="yes") %>% 
+  ggplot( aes(x=name, y=`rank-50%`))+
+    geom_point(aes(col="red"),size=2)+
+  geom_errorbar(aes(ymin = `rank-2.5%`, ymax = `rank-97.5%`,alpha=0.01),size=1)+facet_grid(~Set)+
+  theme_classic()+
+  theme(axis.text.y = element_blank())+
+  geom_hline(yintercept =c(50,500), linetype = 'dashed', color= 'red',size=1)+
+    coord_flip() +
+    xlab("") +ylab("Rank based on R2")+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=13),
+        axis.title.y = element_text(face="bold", colour="black", size=13),
+        axis.text.y = element_text(face="bold", colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=13),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=18),
+        plot.title = element_text(face = "bold",size=18,hjust = 0.5))
+p2<-R2_top_hit %>% mutate(name = reorder(gene_names, dplyr::desc(`rank-50%`))) %>% filter(validated_signal=="yes") %>%
+  ggplot( aes(x=name, y=`R2-50%`))+
+    geom_point(col="red",size=2)+
+  geom_errorbar(aes(ymin = `R2-2.5%`, ymax =`R2-97.5%`,alpha=0.01),size=1)+facet_grid(~Set)+
+  theme_classic()+
+  theme(axis.text.y = element_blank())+
+  geom_hline(yintercept =c(0), linetype = 'dashed', color= '#2ca25f',size=1) +
+      coord_flip() +
+    xlab("") +ylab("R2")+
+    theme_bw()+ theme(legend.position="none")+theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=13),
+        axis.title.y = element_text(face="bold", colour="black", size=13),
+        axis.text.y = element_text(face="bold", colour="black", size=13),
+        axis.text.x = element_text( colour="black", size=13),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=13),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=18),
+        plot.title = element_text(face = "bold",size=18,hjust = 0.5))
+cowplot::plot_grid(p1,p2, nrow = 1)
+png('Results/Figures_Tables/Ranking_R2_signal_genes.png',res=400, units = 'in', width = 20, height =20)
+cowplot::plot_grid(p1,p2, nrow = 2)
+dev.off()
+```
+
+
+
+
+
+
+#### Correlation structure between the top-hit genes
+
+```{r echo=FALSE, fig.height=40, fig.width=120, message=FALSE, warning=FALSE, paged.print=FALSE}
+clinical_RNA_signal<-clinical_RNA
+corr1 <- round(cor(clinical_RNA_signal[index_set_1,common_list],use = 'pairwise.complete.obs'), 2)
+p1<-ggcorrplot(corr1, hc.order = TRUE, outline.col = "white",lab = TRUE,lab_size = 2)+labs(title = "Discovery set")
+
+corr2 <- round(cor(clinical_RNA_signal[index_set_2,common_list],use = 'pairwise.complete.obs'), 2)
+p2<-ggcorrplot(corr2, hc.order = TRUE, outline.col = "white",lab = TRUE,lab_size = 2)+labs(title = "Validation set")
+cowplot::plot_grid(p1,p2, nrow = 1)
+
+png('Results/Figures_Tables/correlation_top_hit.png',res=400, units = 'in', width = 10, height =5)
+cowplot::plot_grid(p1,p2, nrow = 1)
+dev.off()
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+dat_top_hit_set_1<-clinical_RNA[index_set_1,c(common_list,"log2_CT")] %>% mutate(Set="Discovery set") 
+dat_top_hit_set_2<-clinical_RNA[index_set_2,c(common_list,"log2_CT")] %>% mutate(Set="Validation set")
+dat_top_hit<-rbind(dat_top_hit_set_1,dat_top_hit_set_2)
+dat_top_hit$Set<-as.factor(dat_top_hit$Set)
+```
+
+We will visualize the non-linear pattern of the signal cross two subset
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(cowplot)
+d2_long <- gather(dat_top_hit, gene_names, concentration, `CNIH4`:`AC244453.2`, factor_key=TRUE)
+
+p<-list()
+Gene_names<-unique(d2_long$gene_names)
+for(i in 1:length(Gene_names)){
+  df <-subset(d2_long,gene_names==Gene_names[i])
+  
+if(i%in%c(1,6)){
+  ylab<-"log2 CT"
+}else{
+  ylab<-""
+}
+
+p_tmp<-ggplot(data=df,aes(x=concentration ,y=log2_CT,colour=Set ))+geom_point(size=2.5,alpha=0.5)+geom_smooth(method = "gam",formula = y ~ s(x),se = TRUE,size=2)+
+  scale_color_manual(values=c("#313695", "#A50026"))+
+  theme_bw()+
+  labs(x = paste(Gene_names[i]," expression level [log2 counts] "), y = ylab)+theme_bw()+theme(legend.position="bottom")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15))
+
+xdens <- axis_canvas(p_tmp, axis = "x")+geom_density(data=df,aes(x=concentration,fill=Set),alpha=0.25)+scale_fill_manual( values = c("#313695", "#A50026"))
+ 
+p1 <- insert_xaxis_grob(p_tmp, xdens, grid::unit(.2, "null"), position = "top")
+p[[i]]<-ggdraw(p1)
+}
+
+p<-cowplot::plot_grid(plotlist = p, nrow = 2)
+png(file=paste0(path_output,"/Figure1_top_hit_Gene_names_plot.png"),res=450, units = 'in', width = 30, height =24)
+p
+dev.off()
+```
+
+
+
+
+
+
+
+**Of note:** One remaining concern in this analysis is to decide the degree of freedom for the trend of each gene in the smoothness selection model. Should we chose the most flexibility model or we chose the parsimonious one?  --> use the REML method to improve this.
+
+#### Checking the degree of freedom of each gene by cohort
+
+```{r eval=FALSE, include=FALSE}
+## Step 1: Pres-screening signal genes (gene with signal ) regardless linear or non-linear associations using the whole data set.
+
+signal_genes<-common_list
+p.val<-c()
+f0<-mgcv::gam(log2_CT~1,data=clinical_RNA[index_set_1,],family="gaussian",method = "REML",select=T)
+Rsq_adj<-df<-c()
+for(i in signal_genes){
+  f<-formula(paste0("~ s(",i,")"))
+  sum_f<-summary(update(f0,f))
+    signal_genes<-c(signal_genes,i)
+    p.val<-c(p.val,sum_f$s.table[,"p-value"])
+    Rsq_adj<-c(Rsq_adj,sum_f$r.sq)
+    df<-c(df,sum_f$edf)
+}
+
+dat_set_1<-data.frame(gene_names=signal_genes,
+                Rsq_adj_set_1=Rsq_adj,
+                df_set_1=df,p.val_set_1=p.val,
+                Set="Discovery set")
+
+
+p.val<-c()
+f0<-mgcv::gam(log2_CT~1,data=clinical_RNA[index_set_2,],family="gaussian",method="REML")
+Rsq_adj<-df<-c()
+for(i in signal_genes){
+  f<-formula(paste0("~ s(",i,")"))
+  sum_f<-summary(update(f0,f))
+    signal_genes<-c(signal_genes,i)
+    p.val<-c(p.val,sum_f$s.table[,"p-value"])
+    Rsq_adj<-c(Rsq_adj,sum_f$r.sq)
+    df<-c(df,sum_f$edf)
+}
+
+dat_set_2<-data.frame(gene_names=signal_genes,
+                Rsq_adj_set_2=Rsq_adj,
+                df_set_2=df,p.val_set_2=p.val,
+                Set="Validation set") 
+dat<-cbind(dat_set_1,dat_set_2)
+dat$df_parsimony_model<-ceiling(pmin(dat$df_set_1,dat$df_set_2))
+save(dat,file="/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/validated_results.Rdata")
+#The association is very weak to validate by FDR.
+```
+
+
+```{r}
+library(cowplot)
+d2_long <- gather(dat_top_hit, gene_names, concentration, `CNIH4`:`AC244453.2`, factor_key=TRUE)
+df<-dat$df_parsimony_model
+p<-list()
+Gene_names<-unique(d2_long$gene_names)
+for(i in 1:length(Gene_names)){
+  dat_tmp <-subset(d2_long,gene_names==Gene_names[i])
+  j<-df[i]
+# if(i%in%c(1,6)){
+#   ylab<-"Mortality at two months"
+# }else{
+#   ylab<-""
+# }
+
+p_tmp<-ggplot(data=dat_tmp,aes(x=concentration ,y=log2_CT,colour=Set ))+geom_point(size=2.5,alpha=0.5)+geom_smooth(method = "lm",formula = y ~ splines::ns(x,j),se = TRUE,size=2)+
+  scale_color_manual(values=c("#313695", "#A50026"))+
+  theme_bw()+
+  labs(x = paste(Gene_names[i]," expression level [log2 counts] "), y = ylab)+theme_bw()+theme(legend.position="bottom")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15))
+
+xdens <- axis_canvas(p_tmp, axis = "x")+geom_density(data=dat_tmp,aes(x=concentration,fill=Set),alpha=0.25)+scale_fill_manual( values = c("#313695", "#A50026"))
+ 
+p1 <- insert_xaxis_grob(p_tmp, xdens, grid::unit(.2, "null"), position = "top")
+p[[i]]<-ggdraw(p1)
+}
+
+p<-cowplot::plot_grid(plotlist = p, nrow = 2)
+png(file=paste0(path_output,"/Figure1_top_hit_Gene_names_plot.png"),res=450, units = 'in', width = 25, height =50)
+p
+dev.off()
+```
+
+```{r}
+library(cowplot)
+d2_long <- gather(dat_top_hit, gene_names, concentration, `CNIH4`:`AC244453.2`, factor_key=TRUE)
+df<-dat$df_parsimony_model
+p<-list()
+Gene_names<-unique(d2_long$gene_names)
+for(i in 1:length(Gene_names)){
+  dat_tmp <-subset(d2_long,gene_names==Gene_names[i])
+  j<-df[i]
+# if(i%in%c(1,6)){
+#   ylab<-"Mortality at two months"
+# }else{
+#   ylab<-""
+# }
+
+p_tmp<-ggplot(data=dat_tmp,aes(x=concentration ,y=log2_CT ))+geom_point(size=2.5,alpha=0.5)+geom_smooth(method = "lm",formula = y ~ splines::ns(x,j),se = TRUE,size=2)+
+  theme_bw()+
+  labs(x = paste(Gene_names[i]," expression level [log2 counts] "), y = ylab)+theme_bw()+theme(legend.position="bottom")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15))
+
+xdens <- axis_canvas(p_tmp, axis = "x")+geom_density(data=dat_tmp,aes(x=concentration),alpha=0.25)
+ 
+p1 <- insert_xaxis_grob(p_tmp, xdens, grid::unit(.2, "null"), position = "top")
+p[[i]]<-ggdraw(p1)
+}
+
+p<-cowplot::plot_grid(plotlist = p, nrow = 2)
+png(file=paste0(path_output,"/Figure1_top_hit_Gene_names_pooled_plot.png"),res=450, units = 'in', width = 25, height =50)
+p
+dev.off()
+```
+
+#### Association of important genes vs bacterial burden (set_1 set)
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+R2_sum_set_1_set %>% filter(gene_names%in%common_list) %>% 
+  select(gene_names,`R2-50%`,`R2-2.5%`,`R2-97.5%`)->tab1
+knitr::kable(tab1)
+```
+
+#### Association of important genes vs bacterial burden (set_2 set)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+R2_sum_set_2_set  %>% 
+  select(gene_names,`R2-50%`,`R2-2.5%`,`R2-97.5%`)->tab1
+knitr::kable(tab1)
+```
+
+
+
+```{r echo=FALSE, fig.height=20, fig.width=25, message=FALSE, warning=FALSE, paged.print=FALSE}
+## Step 3. Identify the important genes using sampling stability method on the set_2 set
+## The imporatnt genes consist of the high ranked genes with the hub-gene from the WGCNA analysis
+load(file="Data/Upregulation_Module_membership_bacterial_burden_profile.Rdata")
+load(file="Data/common_list.Rdata")
+important_genes<-unique(c(common_list,output_hubs$gene))
+save(important_genes,file="Data/Important_gene.Rdata")
+dat_top_hit<-clinical_RNA[c(important_genes,"log2_CT")]
+#dat_top_hit<-as.data.frame(cbind(x0[,gene_list],y= y))
+mod <- gamboost(log2_CT ~ ., data = dat_top_hit,control = boost_control(risk = "oobag"),dfbase=3)
+par(mfrow = c(5, 5))
+plot(mod,cex.lab=3, cex.axis=3, cex.main=3, cex.sub=3,font=2)
+## First, we check the parameter constellation: Where is the cutoff for a
+## PFER of 1 when q = 10 variables are selected per boosting run if we
+## assume unimodality:
+#stabsel_parameters(mod, q=3, PFER = 1,sampling.type = "SS",B=5000)
+set.seed(12345)
+(stab.boot <- stabs::stabsel(mod, q =3, PFER = 1, mc.cores = 12,sampling.type = "SS",assumption = "r-concave",B=500))
+save(stab.boot,file=paste0(path_output,"/variable_selection.Rdata"))
+```
+
+```{r}
+load(file=paste0(path_output,"/variable_selection.Rdata"))
+
+dat_plot<-data.frame(variable=names(stab.boot$max),`Selected probability`=stab.boot$max) 
+dat_plot %<>% mutate(variable=gsub("bbs\\(","",variable))
+dat_plot %<>% mutate(variable=gsub("\\, df = dfbase\\)","",variable))
+dat_plot %>%
+  mutate(name = reorder(variable, Selected.probability)) %>%
+  ggplot(aes(y=name,x=Selected.probability))+
+  geom_segment(aes(x = 0,
+                   xend = Selected.probability,
+                   y = name,yend=name),
+               color = "gray", lwd = 1)+geom_point(size = 4, pch = 21, bg = 4, col = 1)+ #+geom_point(col="#2c7fb8",size=4,shape=15) +
+  geom_vline(xintercept=stab.boot$cutoff,col="red")+
+  # geom_line(linetype = "dashed")+
+  xlab("Selected probability")+theme_bw()+theme(legend.position="bottom")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(face = "bold", colour="black", size=18),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15),
+        plot.title = element_text(size = 20, face = "bold",hjust = 0.5))+coord_cartesian(xlim=c(0,0.8))->p1
+
+
+png(file=paste0(path_output_2,"/Figure_2C_GBX.png"),res=450, units = 'in', width =7, height =10)
+p1
+
+dev.off()
+```
+
+
+
+
+```{r , echo=FALSE, fig.height=12, fig.width=8, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(cowplot)
+gene_names <-common_list
+dat_top_hit_validate <- subset(clinical_RNA,select=c(gene_names,"log2_CT","Age"))
+d2_long <- gather(dat_top_hit_validate, gene_names, expression_level, CNIH4:FCGR1A, factor_key=TRUE)
+
+p<-list()
+names<-unique(d2_long$gene_names)
+for(i in 1:length(gene_names)){
+df <-d2_long %>% filter(gene_names==names[i])
+# if(mod(i,4)==1){
+#   ylab<-"log2 CT"
+# }else{
+#   ylab<-""
+# }
+p_tmp<-ggplot(data=df,aes(x=expression_level ,y=log2_CT))+geom_point(size=2.5,alpha=0.5)+geom_smooth(method = lm,formula = y ~ splines::bs(x, 3), se = T,size=2,lapha=0.5)+
+  theme_bw()+
+  labs(x = paste(gene_names[i]," abundance [log2 +1sd] "), y = "log2 CT")+theme_bw()+theme(legend.position="bottom")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=12),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15))+coord_cartesian(ylim=c(3,5.5))
+
+xdens <- axis_canvas(p_tmp, axis = "x")+ geom_density(data=df,aes(x=expression_level),alpha=0.25,col="#313695")
+ 
+p1 <- insert_xaxis_grob(p_tmp, xdens, grid::unit(.2, "null"), position = "top")
+p[[i]]<-ggdraw(p1)
+}
+
+
+p<-cowplot::plot_grid(plotlist = p, ncol = 4)
+# png(file=paste0(path_output,"/FigureS9_combined_genes_plot.png"),res=450, units = 'in', width = 25, height =22)
+p
+png('/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Results/association_top_hit.png',res=400, units = 'in', width = 20, height =20)
+p
+dev.off()
+```
+
+
+
+
+#### Additional plot
+
+```{r}
+l<-load("/home/ubuntu/tb_volume/PTB_transcriptomics_project/Analysis/Data/Data_26_27_CT_CNIH4.Rdata.RData")
+
+save(d2_long,file="d2_long.Rdata")
+
+d2_long %>% filter(gene_names=="CNIH4") %>% ggplot(aes(x=concentration ,y=log2_CT))+geom_point(size=2.5,alpha=0.5)+geom_smooth(method = "gam",formula = y ~ s(x),se = TRUE,size=2,col="#313695",fill="#313695")+
+  theme_bw()+
+  labs(x = paste("CNIH4"," expression level [log2 counts] "), y = "Mtb Xpert Ct value")+ theme(panel.grid.minor = element_blank(),axis.title.x = element_text(face="bold", colour="black", size=20),
+        axis.title.y = element_text(face="bold", colour="black", size=20),
+        axis.text.y = element_text( colour="black", size=15),
+        axis.text.x = element_text( colour="black", size=15),
+        axis.ticks.x=element_blank(),
+        legend.text = element_text(size = 15),
+        legend.title = element_text( colour="black", size=15),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=15))+scale_y_continuous(trans = log2_trans(),
+    breaks = log2(seq(10,40,by=5)),
+    labels = seq(10,40,by=5))->p
+
+png(file=paste0(path_output,"/PTB_CNIH4.png"),res=450, units = 'in', width =10, height =10)
+p
+
+dev.off()
+```
+
+
+
+### Validation PCR method (Triet)
+
+```{r}
+
+```
+
+
