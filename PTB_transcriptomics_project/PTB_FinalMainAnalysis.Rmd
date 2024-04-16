@@ -563,7 +563,7 @@ p
 
 #### 3.4.2. BayesPrism
 
-#### 3.4.2.1. Cell Proportion
+#### 3.4.2.1. Cell Types Proportion
 
 ```{r}
 bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy.rdata")))
@@ -613,21 +613,21 @@ tmp3 <- pivot_longer(theta3,CD8T:Neutrophil)
 tmp3$group <- rep('Healthy',each=dim(tmp3)[1])
 tmp<-rbind(tmp1,tmp2_1,tmp2_2,tmp3)
 
-stat.test <- tmp %>%
-  group_by(name) %>% 
-  t_test(value ~ group) %>% 
+stat.test <- tmp %>% 
+  group_by(name) %>%
+  wilcox_test(value ~ group) %>%
   add_significance("p") %>%
-  add_xy_position(x = "name")
-stat.test
-
+  #filter(p.signif !="ns") %>%
+  add_y_position(step.increase = 0.06)
 
 p <- ggplot(data=tmp,
-       aes(x=name,
-           y=value,
-           color=factor(group, level = c('Healthy','PTB','TBM (HIV+)','TBM (HIV-)'))))+
+       aes(x = factor(group, level = c('Healthy','PTB','TBM (HIV+)','TBM (HIV-)')),
+           color=factor(group, level = c('Healthy','PTB','TBM (HIV+)','TBM (HIV-)')),
+           y=value,))+
+  facet_wrap(~factor(name, level=c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')), 
+             ncol = 6)+
   geom_boxplot() +
-  geom_point(position=position_jitterdodge(jitter.width =0.3,jitter.height =0),
-             alpha=0.1)+
+  geom_point(position=position_jitterdodge(jitter.width =0.3),alpha=0.1)+
   scale_color_manual(values=c("#A3BE8C","#81A1C1","#B48EAD","#D08770"))+
   labs(color='Group')+ 
   xlab('Cell type')+
@@ -638,62 +638,16 @@ p <- ggplot(data=tmp,
         legend.text = element_text(size = 20) ,
         legend.title  = element_text(size = 20,color="black",face="bold"),
         axis.text = element_text(size = 25),
-        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.text.x=element_blank(),
         axis.title.x = element_text(size = 20,color="black",face="bold"),
         axis.text.y=element_text(color="black",size=20),
         axis.title.y = element_text(size = 20,color="black",face="bold"),
-        axis.title= element_text(size = 40,color="black",face="bold"))+
-  stat_compare_means(
-    method= "wilcox.test",
-    aes(label = after_stat(p.signif)),
-                     tip.length = 0.1,
-                     bracket.size = 0.3,
-                     step.increase = 0.5,
-                     position=position_jitter(width = 0, height = 0.5),
-    )
-  # stat_pvalue_manual(stat.test, label = 'p.signif', 
-  #                    tip.length = 0.01,
-  #                    step.increase = 0,
-  #                    vjust=0,
-  #                    size=3.88, 
-  #                    #y.position = c(0.9, 1, 0.9),
-  #                    bracket.shorten = 0)
+        axis.title= element_text(size = 40,color="black",face="bold"),
+        strip.text = element_text(face="bold",size=14)) +
+  stat_pvalue_manual(stat.test, 
+                     label = 'p.signif',
+                     tip.length = 0,vjust=0.8)
 p
-
-tmp %>% summarise(wilcox.p = wilcox.test(value ~ group, exact = FALSE))
-
-tmp %>% 
-  group_by(gene.name) %>% 
-  summarise(p=wilcox.test(value~group)$p.value)
-
-table(tmp$group)
-
-tmp %>% group_by(name) %>% summarise(p=wilcox.test(value,group))
-
-
-wilcox.test(filter(tmp, group=='PTB' & name=='Neutrophil')$value, 
-            filter(tmp, group=='TBM (HIV+)' & name=='Neutrophil')$value, paired=FALSE)
-pairwise.wilcox.test(Ozone, Month)
-
-
-attach(airquality)
-Month <- factor(Month, labels = month.abb[5:9])
-## These give warnings because of ties :
-pairwise.wilcox.test(tmp$name.tmp$group)
-pairwise.wilcox.test(Ozone, Month, p.adjust.method = "bonf")
-detach()
-
-pairwise.wilcox.test(tmp$value,tmp$group)
-
-
-
-tmp %>% stat_compare_means(method= "wilcox.test")
-    
-aes(label = after_stat(p.signif)),
-                     tip.length = 0.1,
-                     bracket.size = 0.3,
-                     step.increase = 0.5,
-    position=position_dodge(0.9)
 ```
 
 #### 3.4.2.2. CNIH4 Expression Estimation
@@ -701,17 +655,18 @@ aes(label = after_stat(p.signif)),
 ```{r}
 get_z_vst <- function(bp,gene) {
   z <- get.exp(bp=bp, state.or.type="type")
-  tmp <- vst(round(t(z[,,'Neutrophil'])),
+  tmp <- vst(round(t(z[,,'B'])),
              blind=T,
-             nsub=dim(z[,,'Neutrophil'])[1],
-             fitType='mean') %>% t() %>% as.data.frame()
-  df <- data.frame(Neutrophil = tmp[,gene])
-  cell_list <- c('CD8T', 'Monocyte','CD4T', 'B', 'NK', 'Neutrophil')
-  
+             nsub=dim(z[,,'B'])[1],
+             fitType='parametric') %>% t() %>% as.data.frame()
+  df <- data.frame(B = tmp[,gene])
+  row.names(df) <- row.names(tmp)
+  cell_list <- c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')
   for(i in 1:length(cell_list)){
     c <- cell_list[i]
     print(c)
-    tmp <- vst(round(t(z[,,c])),blind=T,nsub=dim(z[,,'Neutrophil'])[1]) %>% t() %>% as.data.frame()
+    tmp <- round(z[,,c])
+    tmp <- vst(round(t(z[,,c])),blind=T,nsub=dim(z[,,c])[1]) %>% t() %>% as.data.frame()
     df[,c] <- tmp[,gene]
   }
   return(df)
@@ -719,33 +674,60 @@ get_z_vst <- function(bp,gene) {
 
 zptb_cnih4 <- get_z_vst(bp.res_ptb,'CNIH4')
 ztbm_cnih4 <- get_z_vst(bp.res_tbm,'CNIH4')
-zh_cnih4 <- get_z_vst(bp.res_healthy,'CNIH4')
+ztbm26_cnih4 <- ztbm_cnih4[id26TB$LIMS_ID,]
+ztbm27_cnih4 <- ztbm_cnih4[id27TB$LIMS_ID,]
+zhealthy_cnih4 <- get_z_vst(bp.res_healthy,'CNIH4')
+
+which(ztbm26_cnih4<0,arr.ind = TRUE)
 ```
 
 ```{r}
 
-tmp1 <- pivot_longer(zptb_cnih4,Neutrophil:NK)
+tmp1 <- pivot_longer(zptb_cnih4,B:Neutrophil)
 tmp1$group <- rep('PTB',each=dim(tmp1)[1])
-tmp2<- pivot_longer(ztbm_cnih4,Neutrophil:NK)
+tmp2<- pivot_longer(ztbm_cnih4,B:Neutrophil)
 tmp2$group <- rep('TBM',each=dim(tmp2)[1])
-tmp3 <- pivot_longer(zh_cnih4,Neutrophil:NK)
-tmp3$group <- rep('Healthy',each=dim(tmp3)[1])
-tmp<-rbind(tmp1,tmp2,tmp3)
 
-stat.test <- tmp %>%
-  group_by(name) %>% 
-  t_test(value ~ group) %>% 
+tmp2_1<- pivot_longer(ztbm26_cnih4,B:Neutrophil)
+tmp2_1$group <- rep('TBM (HIV+)',each=dim(tmp2_1)[1])
+tmp2_2<- pivot_longer(ztbm27_cnih4,B:Neutrophil)
+tmp2_2$group <- rep('TBM (HIV-)',each=dim(tmp2_2)[1])
+
+tmp3 <- pivot_longer(zhealthy_cnih4,B:Neutrophil)
+tmp3$group <- rep('Healthy',each=dim(tmp3)[1])
+tmp<-rbind(tmp1,
+           tmp2_1,
+           tmp2_2,
+           tmp3)
+
+stat.test <- tmp %>% 
+  group_by(name) %>%
+  wilcox_test(value ~ group) %>%
   add_significance("p") %>%
-  add_xy_position(x = "name")
+  #filter(p.signif !="ns") %>%
+  add_y_position(step.increase = 0.04)
 
 p <- ggplot(data=tmp,
-       aes(x=name,
+       aes(x = factor(group, level = c('Healthy',
+                                         'PTB',
+                                         'TBM (HIV+)',
+                                         'TBM (HIV-)')),
            y=value,
-           color=factor(group, level = c('Healthy','PTB','TBM'))))+
+           color=factor(group, level = c('Healthy',
+                                         'PTB',
+                                         'TBM (HIV+)',
+                                         'TBM (HIV-)'
+                                         ))))+
+  facet_wrap(~factor(name, level=c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')), 
+             ncol = 6)+
   geom_boxplot() +
   geom_point(position=position_jitterdodge(jitter.width =0.3),
              alpha=0.1)+
-  scale_color_manual(values=c("#81A1C1","#B48EAD","#A3BE8C"))+
+  scale_color_manual(values=c("#A3BE8C",
+                              "#81A1C1",
+                              "#B48EAD",
+                              "#D08770"
+                              ))+
   labs(color='Group')+ 
   xlab('Cell type')+
   ylab('CNIH4 Z Estimation')+
@@ -755,15 +737,19 @@ p <- ggplot(data=tmp,
         legend.text = element_text(size = 20) ,
         legend.title  = element_text(size = 20,color="black",face="bold"),
         axis.text = element_text(size = 25),
-        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.text.x=element_blank(),
         axis.title.x = element_text(size = 20,color="black",face="bold"),
         axis.text.y=element_text(color="black",size=20),
         axis.title.y = element_text(size = 20,color="black",face="bold"),
-        axis.title= element_text(size = 40,color="black",face="bold"))+
-  stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
+        axis.title= element_text(size = 40,color="black",face="bold"),
+        strip.text = element_text(face="bold",size=14)) +
+  stat_pvalue_manual(stat.test, 
+                     label = 'p.signif',
+                     tip.length = 0,vjust=1)
+p
 ```
 
-#### 3.4.2.3. PD-L1 Expression Estimation
+#### 3.4.2.3. PD-L1 Expression Estimation. Wait
 
 ```{r}
 z <- get.exp(bp=bp.res_ptb, state.or.type="type")
@@ -777,7 +763,9 @@ df <- data.frame(Neutrophil = tmp[,'CD274'])
 ```{r}
 zptb_cd274 <- get_z_vst(bp.res_ptb,'CD274')
 ztbm_cd274 <- get_z_vst(bp.res_tbm,'CD274')
-zh_cd274 <- get_z_vst(bp.res_healthy,'CD274')
+ztbm26_cnih4 <- ztbm_cnih4[id26TB$LIMS_ID,]
+ztbm27_cnih4 <- ztbm_cnih4[id27TB$LIMS_ID,]
+zhealthy_cd274 <- get_z_vst(bp.res_healthy,'CD274')
 ```
 
 ```{r}
@@ -819,6 +807,20 @@ p <- ggplot(data=tmp,
         axis.title.y = element_text(size = 20,color="black",face="bold"),
         axis.title= element_text(size = 40,color="black",face="bold"))+
   stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
+```
+
+#### 3.4.2.4. Heatmap genes vs samples
+
+```{r}
+z <- get.exp(bp=bp.res_ptb, state.or.type="type",cell.name = 'Neutrophil')
+tmp <- vst(round(t(z[,])),
+             blind=T,
+             nsub=dim(z[,])[1],
+             fitType='parametric') %>% t() %>% as.data.frame()
+df <- data.frame(tmp)
+df
+library(NatParksPalettes)
+natparks.pals(name="DeathValley",n=7,type="continuous")
 ```
 
 #### 3.4.2.4. ssGSEA for group + celltype
@@ -863,33 +865,44 @@ get_ssgsea <- function(bp.res){
 TCRsig_df_ptb <- get_ssgsea(bp.res = bp.res_ptb)
 TCRsig_df_healthy <- get_ssgsea(bp.res = bp.res_healthy)
 TCRsig_df_tbm <- get_ssgsea(bp.res = bp.res_tbm)
+TCRsig_df_tbm26 <- TCRsig_df_tbm[id26TB$LIMS_ID,]
+TCRsig_df_tbm27 <- TCRsig_df_tbm[id27TB$LIMS_ID,]
+
 
 TCRsig_df_long_ptb <- pivot_longer(TCRsig_df_ptb,B:Monocyte)
 TCRsig_df_long_healthy <- pivot_longer(TCRsig_df_healthy,B:Monocyte)
 TCRsig_df_long_tbm <- pivot_longer(TCRsig_df_tbm,B:Monocyte)
+TCRsig_df_long_tbm26 <- pivot_longer(TCRsig_df_tbm26,B:Monocyte)
+TCRsig_df_long_tbm27 <- pivot_longer(TCRsig_df_tbm27,B:Monocyte)
 
 TCRsig_df_long_ptb$group <- rep('PTB',each=dim(TCRsig_df_long_ptb)[1])
 TCRsig_df_long_healthy$group <- rep('Healthy',each=dim(TCRsig_df_long_healthy)[1])
 TCRsig_df_long_tbm$group <- rep('TBM',each=dim(TCRsig_df_long_tbm)[1])
+TCRsig_df_long_tbm26$group <- rep('TBM (HIV+)',each=dim(TCRsig_df_long_tbm26)[1])
+TCRsig_df_long_tbm27$group <- rep('TBM (HIV-)',each=dim(TCRsig_df_long_tbm27)[1])
 
-tmp<-rbind(TCRsig_df_long_healthy,TCRsig_df_long_ptb,TCRsig_df_long_tbm)
 
-stat.test <- tmp %>%
-  group_by(name) %>% 
-  t_test(value ~ group) %>% 
+tmp<-rbind(TCRsig_df_long_healthy,
+           TCRsig_df_long_ptb,
+           TCRsig_df_long_tbm26,
+           TCRsig_df_long_tbm27)
+
+stat.test <- tmp %>% 
+  group_by(name) %>%
+  wilcox_test(value ~ group) %>%
   add_significance("p") %>%
-  add_xy_position(x = "name")
-stat.test
+  #filter(p.signif !="ns") %>%
+  add_y_position(step.increase = 0.06)
 
 p <- ggplot(data=tmp,
-       aes(x=name,
-           y=value,
-           color=factor(group, level = c('Healthy','PTB','TBM'))))+
+       aes(x = factor(group, level = c('Healthy','PTB','TBM (HIV+)','TBM (HIV-)')),
+           color=factor(group, level = c('Healthy','PTB','TBM (HIV+)','TBM (HIV-)')),
+           y=value,))+
+  facet_wrap(~factor(name, level=c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')), 
+             ncol = 6)+
   geom_boxplot() +
-  #scale_y_continuous( log_trans())+
-  geom_point(position=position_jitterdodge(jitter.width =0.3,jitter.height =0),
-             alpha=0.1)+
-  scale_color_manual(values=c("#A3BE8C","#81A1C1","#B48EAD"))+
+  geom_point(position=position_jitterdodge(jitter.width =0.3),alpha=0.1)+
+  scale_color_manual(values=c("#A3BE8C","#81A1C1","#B48EAD","#D08770"))+
   labs(color='Group')+ 
   xlab('Cell type')+
   ylab('Enrichment score of T-cell receptor signaling pathways')+
@@ -899,50 +912,15 @@ p <- ggplot(data=tmp,
         legend.text = element_text(size = 20) ,
         legend.title  = element_text(size = 20,color="black",face="bold"),
         axis.text = element_text(size = 25),
-        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.text.x=element_blank(),
         axis.title.x = element_text(size = 20,color="black",face="bold"),
         axis.text.y=element_text(color="black",size=20),
         axis.title.y = element_text(size = 20,color="black",face="bold"),
-        axis.title= element_text(size = 40,color="black",face="bold"))+
-  stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
-  # stat_compare_means(
-  #   method= "wilcox.test",
-  #   aes(label = after_stat(p.signif)),
-  #                    tip.length = 0.1,
-  #                    bracket.size = 0.3,
-  #                    step.increase = 0.5,
-  #                    position=position_jitter(width = 0, height = 0.5),
-  #   )
-
-p
-p <- ggplot(data=TCR_signaling_df_long,aes(x=name,
-                                           y=value,
-                                           color=factor(name)))+
-  geom_boxplot() +
-  geom_point(position=position_jitterdodge(jitter.width =1.5,jitter.height =0),
-             alpha=0.1)+
-  scale_color_manual(values=c("#A3BE8C","#81A1C1","#88C0D0","#B48EAD","#D08770","#BF616A"))+
-  labs(color='Group')+ 
-  xlab('Cell type')+
-  ylab('Enrichment score of T-cell receptor signaling pathways')+
-  theme_bw()+
-  theme(plot.title = element_text(size = 25),
-        legend.position = "right",
-        legend.text = element_text(size = 20) ,
-        legend.title  = element_text(size = 20,color="black",face="bold"),
-        axis.text = element_text(size = 25),
-        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
-        axis.title.x = element_text(size = 20,color="black",face="bold"),
-        axis.text.y=element_text(color="black",size=20),
-        axis.title.y = element_text(size = 20,color="black",face="bold"),
-        axis.title= element_text(size = 40,color="black",face="bold"))
-  # stat_pvalue_manual(stat.test, label = 'p.signif', 
-  #                    tip.length = 0.01,
-  #                    step.increase = 0,
-  #                    vjust=0,
-  #                    size=3.88, 
-  #                    #y.position = c(0.9, 1, 0.9),
-  #                    bracket.shorten = 0)
+        axis.title= element_text(size = 40,color="black",face="bold"),
+        strip.text = element_text(face="bold",size=14)) +
+  stat_pvalue_manual(stat.test, 
+                     label = 'p.signif',
+                     tip.length = 0,vjust=0.8)
 p
 ```
 
