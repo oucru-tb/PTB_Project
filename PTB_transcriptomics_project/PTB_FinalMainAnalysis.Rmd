@@ -13,6 +13,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## 1. Import libraries and data
 
+```{r}
+
+```
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
 	echo = TRUE,
@@ -51,15 +55,20 @@ library(flextable)
 library(pheatmap)
 library(ggplot2)
 library(ggplotify)
+
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
 path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Triet_Results")
+
+
+
+
 ```
 
 ```{r}
-
-
+#clinical data
+load(paste0(path_input,'/Data/clinical_data_HC_CNS_IF_PTB_TBM.RData'))
 load(paste0(path_input,"/Raw_data/vst_Gensymbol_allPTB_295Sample_18Feb22.RData")) #vst_data 295 31425
 load(paste0(path_input,"/Raw_data/vst_Gensymbol_allTBM_281Sample_12Jan24.RData")) #tbm_vst 281 31381
 rownames(tbm_vst) <- tbm_vst$LIMS_ID
@@ -123,10 +132,6 @@ table(tmp$level) # 244 52
 vst_data2<-merge(vst_data,tmp[,2, drop=FALSE],by=0)
 rownames(vst_data2) <- vst_data2$LIMS_ID
 dim(vst_data2) # 295 31427
-```
-
-```{r}
-PTB_TBM_ComBat
 ```
 
 ## 2. Helper functions
@@ -231,9 +236,21 @@ color.bar <- function(lut, min, max=-min, nticks=11, ticks=seq(min, max, len=nti
     rect(0,y,10,y+1/scale, col=lut[i], border=NA)
   }
 }
+
+get_theta <- function(bp) {
+  theta <- get.fraction (bp=bp,
+            which.theta="final",
+            state.or.type="type")
+  theta <- as.data.frame(theta)
+  row.names(theta) <- gsub("X", "", row.names(theta))
+  row.names(theta) <- gsub("_PBMC", "", row.names(theta))
+  theta <- theta[ order(row.names(theta)), ]
+  theta$Lymphocyte <- theta$B + theta$CD4T + theta$CD8T + theta$NK
+  return(theta)
+}
 ```
 
-### 3. Main Analysis
+## 3. Main Analysis
 
 ### 3.1. Correlation Heatmap CNIH4 vs 27 ICs
 
@@ -250,7 +267,6 @@ ICvsCNIH4_df <- ICvsCNIH4_df[vapply(ICvsCNIH4_df,
                                                                     'CD274/PDL1'='CD274',
                                                                     'LGALS9/Galactin-9'='LGALS9',
                                                                     'PDCD1/PD1'='PDCD1')
-
 cor_method = 'spearman'
 ICvsCNIH4_mat <- cor(ICvsCNIH4_df,
                       use='pairwise.complete.obs',
@@ -325,6 +341,7 @@ IC_names<-c('CD200', 'CD2','CD58','TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF
              'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
              'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
              'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9','CNIH4')
+
 df <- vst_data %>%select(IC_names) %>% dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
          'CD274/PDL1'='CD274',
          'LGALS9/Galactin-9'='LGALS9',
@@ -428,7 +445,7 @@ set_cmdstan_path('C:/Users/triettm/OneDrive - Oxford University Clinical Researc
 
 #### 3.3.3. CNIH4 vs Ct value in PCR patients
 
-### 3.4. Deconvolution Analysis
+### 3.4. Deconvolution Analysis using CIBERSORT
 
 #### 3.4.1. CIBERSORT Cell pops
 
@@ -561,9 +578,77 @@ p <- ggplot(data=tmp,
 p
 ```
 
-#### 3.4.2. BayesPrism
+### 3.5. Deconvolution Analysis using BayesPrism
 
-#### 3.4.2.1. Cell Types Proportion
+```{r}
+library(comprehenr)
+
+vsd_adj <- get(load(file=paste0(path_input,"Raw_data/vsd_TBM_PTB_HV_batch_adjusted.Rdata")))
+vsd_adj_study <- get(load(file=paste0(path_input,"Raw_data/vsd_TBM_PTB_HV_batch_adjusted_bySTUDY.Rdata")))
+vsd_before<- get(load(file=paste0(path_input,"Raw_data/vsd_TBM_PTB_HV_batch_before.Rdata")))
+
+# vsd_adj <- get(load(file=paste0(path_input,"Raw_data/vsd_26TB_batch_adjusted.Rdata")))
+# vsd_before <- get(load(file=paste0(path_input,"Raw_data/vsd_26TB_batch_before.Rdata")))
+
+c1 = c('HOA11355A060','HOA11355A330','HOA11355A334','HOA11355A373','HOA11355A374') #pp1
+c2 = c('HOA7812A5','HOA7812A1','HOA7812A12','HOA7812A13','HOA7812A14') #pp2
+
+tmp1 <- vsd_before[,c1]%>% as.data.frame()
+tmp2 <- vsd_before[,c2]%>% as.data.frame()
+
+
+
+
+
+tmp3 <- vsd_adj[,c1]%>% as.data.frame()
+tmp4 <- vsd_adj[,c2]%>% as.data.frame()
+to_vec(for(i in 1:5) sqrt(sum((tmp3[,c1[i]]-tmp4[,c2[i]])^2)))
+
+
+
+
+tmp5 <- vsd_adj_study[,c1]%>% as.data.frame()
+tmp6 <- vsd_adj_study[,c2]%>% as.data.frame()
+to_vec(for(i in 1:5) sqrt(sum((tmp5[,c1[i]]-tmp6[,c2[i]])^2)))
+
+
+
+#
+to_vec(for(i in 1:5) sqrt(sum((tmp1[,c1[i]]-tmp3[,c1[i]])^2)))
+to_vec(for(i in 1:5) sqrt(sum((tmp1[,c1[i]]-tmp5[,c1[i]])^2)))
+to_vec(for(i in 1:5) sqrt(sum((tmp3[,c1[i]]-tmp5[,c1[i]])^2)))
+
+to_vec(for(i in 1:5) sqrt(sum((tmp2[,c2[i]]-tmp4[,c2[i]])^2)))
+to_vec(for(i in 1:5) sqrt(sum((tmp2[,c2[i]]-tmp6[,c2[i]])^2)))
+to_vec(for(i in 1:5) sqrt(sum((tmp4[,c2[i]]-tmp6[,c2[i]])^2)))
+```
+
+#### 3.5.0. Extract data from BayesPrism results
+
+```{r}
+#load BayesPrism result
+bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy.rdata")))
+bp.res_ptb <- get(load(file=paste0(path_input,"Data/bp.res_ptb.rdata")))
+bp.res_tbm <- get(load(file=paste0(path_input,"Data/bp.res_tbm.rdata")))
+
+# Get cell proportion for each patient
+id26TB <- All_sample_RNAseq %>% subset(Study %in% c("26TB") & timepoint=='D0') %>% select('LIMS_ID')
+id27TB <- All_sample_RNAseq %>% subset(Study %in% c("27TB") & timepoint=='D0') %>% select('LIMS_ID')
+
+theta_ptb <- get_theta(bp.res_ptb)
+theta_tbm <- get_theta(bp.res_tbm)
+theta_tbm26 <- theta_tbm[id26TB$LIMS_ID,]
+theta_tbm27 <- theta_tbm[id27TB$LIMS_ID,]
+theta_healthy <- get_theta(bp.res_healthy)
+
+# Get z estimation for each cell type for each group
+z_healthy <- get.exp(bp=bp.res_healthy, state.or.type="type") #patient x genes x celltypes
+z_ptb <- get.exp(bp=bp.res_ptb, state.or.type="type")
+z_tbm <- get.exp(bp=bp.res_tbm, state.or.type="type")
+z_tbm[,'CNIH4',]
+```
+
+#### 3.5.1. Cell Types Proportion
 
 ```{r}
 bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy.rdata")))
@@ -597,7 +682,6 @@ theta2 <- get_theta(bp.res_tbm)
 theta2_1 <- theta2[id26TB$LIMS_ID,]
 theta2_2 <- theta2[id27TB$LIMS_ID,]
 theta3 <- get_theta(bp.res_healthy)
-
 
 tmp1 <- pivot_longer(theta1,CD8T:Neutrophil)
 tmp1$group <- rep('PTB',each=dim(tmp1)[1])
@@ -646,11 +730,110 @@ p <- ggplot(data=tmp,
         strip.text = element_text(face="bold",size=14)) +
   stat_pvalue_manual(stat.test, 
                      label = 'p.signif',
-                     tip.length = 0,vjust=0.8)
+                     tip.length = 0,vjust=0.2)
+png(file=paste0(path_output,"/BayesPrism_CellPops.png"),res=900, units = 'in', width=17, height = 7)
 p
+dev.off()
 ```
 
-#### 3.4.2.2. CNIH4 Expression Estimation
+#### 3.5.1.1. Cell counts
+
+```{r}
+WBC_df
+```
+
+```{r}
+WBC_df <- clinical_data_HC_CNS_IF_PTB_TBM[,c('LIMS_ID','WBC')]
+row.names(WBC_df) <- WBC_df$LIMS_ID
+
+tmp <- merge(theta1,WBC_df,by=0)
+theta1_count <- data.frame(B = tmp$B*tmp$WBC,
+                           CD4T = tmp$CD4T*tmp$WBC,
+                           CD8T = tmp$CD8T*tmp$WBC,
+                           NK = tmp$NK*tmp$WBC,
+                           Monocyte = tmp$Monocyte*tmp$WBC,
+                           Neutrophil = tmp$Neutrophil*tmp$WBC)
+
+tmp <- merge(theta2_1,WBC_df,by=0)
+theta2_1_count <- data.frame(B = tmp$B*tmp$WBC,
+                           CD4T = tmp$CD4T*tmp$WBC,
+                           CD8T = tmp$CD8T*tmp$WBC,
+                           NK = tmp$NK*tmp$WBC,
+                           Monocyte = tmp$Monocyte*tmp$WBC,
+                           Neutrophil = tmp$Neutrophil*tmp$WBC)
+
+tmp <- merge(theta2_2,WBC_df,by=0)
+theta2_2_count <- data.frame(B = tmp$B*tmp$WBC,
+                           CD4T = tmp$CD4T*tmp$WBC,
+                           CD8T = tmp$CD8T*tmp$WBC,
+                           NK = tmp$NK*tmp$WBC,
+                           Monocyte = tmp$Monocyte*tmp$WBC,
+                           Neutrophil = tmp$Neutrophil*tmp$WBC)
+tmp <- merge(theta3,WBC_df,by=0)
+theta3_count <- data.frame(B = tmp$B*tmp$WBC,
+                           CD4T = tmp$CD4T*tmp$WBC,
+                           CD8T = tmp$CD8T*tmp$WBC,
+                           NK = tmp$NK*tmp$WBC,
+                           Monocyte = tmp$Monocyte*tmp$WBC,
+                           Neutrophil = tmp$Neutrophil*tmp$WBC)
+
+tmp1 <- pivot_longer(theta1_count,B:Neutrophil)
+tmp1$value <- log10(tmp1$value)
+tmp1$group <- rep('PTB',each=dim(tmp1)[1])
+
+tmp2_1<- pivot_longer(theta2_1_count,B:Neutrophil)
+tmp2_1$value <- log10(tmp2_1$value)
+tmp2_1$group <- rep('TBM (HIV+)',each=dim(tmp2_1)[1])
+tmp2_2<- pivot_longer(theta2_2_count,B:Neutrophil)
+tmp2_2$value <- log10(tmp2_2$value)
+tmp2_2$group <- rep('TBM (HIV-)',each=dim(tmp2_2)[1])
+tmp3 <- pivot_longer(theta3_count,B:Neutrophil)
+tmp3$value <- log10(tmp3$value)
+tmp3$group <- rep('Healthy',each=dim(tmp3)[1])
+tmp<-rbind(tmp1,tmp2_1,tmp2_2,tmp3)
+
+stat.test <- tmp %>% 
+  group_by(name) %>%
+  wilcox_test(value ~ group) %>%
+  add_significance("p") %>%
+  #filter(p.signif !="ns") %>%
+  add_y_position(step.increase = 0.2)
+
+p <- ggplot(data=tmp,
+       aes(x = factor(group, level = c('Healthy','PTB','TBM (HIV-)','TBM (HIV+)')),
+           color=factor(group, level = c('Healthy','PTB','TBM (HIV-)','TBM (HIV+)')),
+           y=value,))+
+  facet_wrap(~factor(name, 
+                     level=c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')), scale='free', 
+             ncol = 6)+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),alpha=0.1)+
+  scale_color_manual(values=c("#A3BE8C","#81A1C1","#B48EAD","#D08770"))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('Log10 cell count')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_blank(),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"),
+        strip.text = element_text(face="bold",size=14)) +
+  stat_pvalue_manual(stat.test, 
+                     label = 'p.signif',
+                     tip.length = 0,vjust=0.5)
+
+png(file=paste0(path_output,"/BayesPrism_CellCounts.png"),res=900, units = 'in', width=17, height = 7)
+p
+dev.off()
+```
+
+#### 3.5.2. CNIH4 Expression Estimation
 
 ```{r}
 get_z_vst <- function(bp,gene) {
@@ -730,7 +913,7 @@ p <- ggplot(data=tmp,
                               ))+
   labs(color='Group')+ 
   xlab('Cell type')+
-  ylab('CNIH4 Z Estimation')+
+  ylab('CNIH4 estimation (after VST)')+
   theme_bw()+
   theme(plot.title = element_text(size = 25),
         legend.position = "right",
@@ -746,10 +929,48 @@ p <- ggplot(data=tmp,
   stat_pvalue_manual(stat.test, 
                      label = 'p.signif',
                      tip.length = 0,vjust=1)
+
+png(file=paste0(path_output,"/BayesPrism_zCNIH4.png"),res=900, units = 'in', width=17, height = 7)
 p
+dev.off()
+
 ```
 
-#### 3.4.2.3. PD-L1 Expression Estimation. Wait
+#### 3.5.3. PD-L1 Expression Estimation. Wait
+
+```{r}
+zptb_pdl1 <- get_z_vst(bp.res_ptb,'CD274')
+tmp1 <- pivot_longer(zptb_pdl1,B:Neutrophil)
+
+p <- ggplot(data=tmp1,
+       aes(x = factor(name, level=c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')),
+           y=value,
+           color=name))+
+         geom_boxplot()+
+geom_point(position=position_jitterdodge(jitter.width =0.3),
+             alpha=0.1)+
+  scale_color_manual(values=c("#A3BE8C",
+                              "#81A1C1",
+                              "#B48EAD",
+                              "#BF616A","#D08770","#88C0D0"
+                              ))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('PD-L1 estimation (after VST)')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "none",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_text(color="black",size=13,face="bold",angle = 45,vjust = 1, hjust=1),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"),
+        strip.text = element_text(face="bold",size=14))
+p
+```
 
 ```{r}
 z <- get.exp(bp=bp.res_ptb, state.or.type="type")
@@ -809,7 +1030,7 @@ p <- ggplot(data=tmp,
   stat_pvalue_manual(stat.test, label = 'p.signif', tip.length = 0)
 ```
 
-#### 3.4.2.4. Heatmap genes vs samples
+#### 3.5.4. Heatmap genes vs samples
 
 ```{r}
 z <- get.exp(bp=bp.res_ptb, state.or.type="type",cell.name = 'Neutrophil')
@@ -823,7 +1044,7 @@ library(NatParksPalettes)
 natparks.pals(name="DeathValley",n=7,type="continuous")
 ```
 
-#### 3.4.2.4. ssGSEA for group + celltype
+#### 3.5.5. ssGSEA for group + celltype
 
 ```{r}
 library(GSVA)
@@ -852,6 +1073,13 @@ get_ssgsea <- function(bp.res){
                state.or.type="type",
                cell.name = cellname
                )
+  
+  z <- vst(round(t(z)),
+           blind=T, 
+           nsub=dim(z)[1],
+           fitType='parametric') %>% t() %>% as.data.frame()
+  
+  
   GSVA_targeted <- gsva(t(z), gset.idx.list=list(TCR_signaling=TCR_signaling),method="ssgsea",mx.diff=T)
   GSVA_targeted<-as.data.frame(t(GSVA_targeted))
   TCR_signaling_df[,cellname] = GSVA_targeted$TCR_signaling
@@ -860,7 +1088,6 @@ get_ssgsea <- function(bp.res){
   TCR_signaling_df <- TCR_signaling_df[,c('B','CD4T','CD8T','NK','Neutrophil','Monocyte')]
   return(TCR_signaling_df)
 }
-
 
 TCRsig_df_ptb <- get_ssgsea(bp.res = bp.res_ptb)
 TCRsig_df_healthy <- get_ssgsea(bp.res = bp.res_healthy)
@@ -921,10 +1148,12 @@ p <- ggplot(data=tmp,
   stat_pvalue_manual(stat.test, 
                      label = 'p.signif',
                      tip.length = 0,vjust=0.8)
+png(file=paste0(path_output,"/BayesPrism_ssGSEA_TCRsignal.png"),res=900, units = 'in', width=17, height =10)
 p
+dev.off()
 ```
 
-### 3.5. DESEQ2 Analysis
+### 3.6. DESEQ2 Analysis
 
 ```{r}
 library(EnhancedVolcano)
@@ -992,7 +1221,7 @@ deg_high <- to_vec(for(i in 1:length(deg_high)) filter(anno_symbol,gene_id==deg_
 deg_low <- to_vec(for(i in 1:length(deg_low)) filter(anno_symbol,gene_id==deg_low[i])$gene_symbol)
 ```
 
-### 3.6. Pathway Analysis
+### 3.7. Pathway Analysis
 
 ```{r}
 ORA_bar_plot <- function(df,name,n=5){
@@ -1111,7 +1340,7 @@ theme(plot.title = element_text(size = 20),
 p
 ```
 
-### 3.7. Isoforms Correlation Analysis
+### 3.8. Salmon Isoforms Correlation Analysis
 
 ```{r}
 write.csv(salmons12,'ptb_CNIH4_CD274_salmon_vst.csv',row.names = TRUE)
@@ -1170,22 +1399,12 @@ col.order <- p01$tree_col$order
 p1 <- as.ggplot(p01)
 ```
 
-### 3.8. AUC
+### 3.9. Association of CNIH4 with PD1/PD-L1 pathway (ssGSEA)
 
 ```{r}
-ptb_ct40 <- vst_data %>% select(c('LIMS_ID','CNIH4','CT_mean')) %>% filter(CT_mean==40)
-tbm_ct40 <- Data_26_27_CT %>% mutate(CT_mean=NAT) %>% select(c('LIMS_ID','CNIH4','CT_mean')) %>% filter(CT_mean==40)
-row.names(tbm_ct40) <- tbm_ct40$LIMS_ID
-ptb_tbm_ct40 <- rbind(ptb_ct40,tbm_ct40)
 
-
-healthy <- healthy_df %>% select(c('LIMS_ID','CNIH4'))
-write.csv(ptb_tbm_ct40,'ptb_tbm_ct40_CNIH4.csv',row.names = FALSE)
-write.csv(healthy,'healthy_CNIH4.csv',row.names = FALSE)
 ```
 
-# Draft
+### 3.10. Association of CNIH4 with IFN pathway from GO/Reactome database (ssGSEA)
 
-```{r}
-colnames(salmon12)
-```
+### 3.11. Association of CNIH4 with pro-inflamatory and anti-inflamatory cytokines
