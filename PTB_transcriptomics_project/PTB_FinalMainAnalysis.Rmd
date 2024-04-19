@@ -13,10 +13,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## 1. Import libraries and data
 
-```{r}
-
-```
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
 	echo = TRUE,
@@ -60,10 +56,6 @@ path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
 path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Triet_Results")
-
-
-
-
 ```
 
 ```{r}
@@ -397,7 +389,6 @@ ncol =6,nrow=5)
 ### 3.3. Hurdles Model PTB vs TBM vs PCR
 
 ```{r}
-{r}
 library(brms)
 library(cmdstanr)
 library(posterior)
@@ -626,6 +617,19 @@ to_vec(for(i in 1:5) sqrt(sum((tmp4[,c2[i]]-tmp6[,c2[i]])^2)))
 #### 3.5.0. Extract data from BayesPrism results
 
 ```{r}
+
+get_theta <- function(bp) {
+  theta <- get.fraction (bp=bp,
+            which.theta="final",
+            state.or.type="type")
+  theta <- as.data.frame(theta)
+  row.names(theta) <- gsub("X", "", row.names(theta))
+  row.names(theta) <- gsub("_PBMC", "", row.names(theta))
+  theta <- theta[ order(row.names(theta)), ]
+  theta$Lymphocyte <- theta$B + theta$CD4T + theta$CD8T + theta$NK
+  return(theta)
+}
+
 #load BayesPrism result
 bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy.rdata")))
 bp.res_ptb <- get(load(file=paste0(path_input,"Data/bp.res_ptb.rdata")))
@@ -641,11 +645,48 @@ theta_tbm26 <- theta_tbm[id26TB$LIMS_ID,]
 theta_tbm27 <- theta_tbm[id27TB$LIMS_ID,]
 theta_healthy <- get_theta(bp.res_healthy)
 
+theta_ptb_long <- pivot_longer(theta_ptb,CD8T:Neutrophil)
+theta_ptb_long$group <- rep('PTB',each=dim(theta_ptb_long)[1])
+theta_tbm_long <- pivot_longer(theta_tbm,CD8T:Neutrophil)
+theta_tbm_long$group <- rep('TBM',each=dim(theta_tbm_long)[1])
+theta_tbm26_long <- pivot_longer(theta_tbm26,CD8T:Neutrophil)
+theta_tbm26_long$group <- rep('TBM (HIV+)',each=dim(theta_tbm26_long)[1])
+theta_tbm27_long <- pivot_longer(theta_tbm27,CD8T:Neutrophil)
+theta_tbm27_long$group <- rep('TBM (HIV-)',each=dim(theta_tbm27_long)[1])
+theta_healthy_long <- pivot_longer(theta_healthy,CD8T:Neutrophil)
+theta_healthy_long$group <- rep('Healthy',each=dim(theta_healthy_long)[1])
+theta_long<-rbind(theta_ptb_long,theta_tbm27_long,theta_tbm26_long,theta_healthy_long)
+
 # Get z estimation for each cell type for each group
-z_healthy <- get.exp(bp=bp.res_healthy, state.or.type="type") #patient x genes x celltypes
+z_healthy <- get.exp(bp=bp.res_healthy, state.or.type="type")
 z_ptb <- get.exp(bp=bp.res_ptb, state.or.type="type")
 z_tbm <- get.exp(bp=bp.res_tbm, state.or.type="type")
-z_tbm[,'CNIH4',]
+z_tbm26 <- z_tbm[id26TB$LIMS_ID,,]
+z_tbm27 <- z_tbm[id27TB$LIMS_ID,,]
+
+#vst transform
+for (c in colnames(z_healthy[1,,])) {
+  z_healthy[,,c] <-vst(round(t(z_healthy[,,c])),
+                    blind=T,
+                    nsub=dim(z_healthy[,,c])[1],
+                    fitType='parametric') %>% t()
+  z_ptb[,,c] <-vst(round(t(z_ptb[,,c])),
+                  blind=T,
+                  nsub=dim(z_ptb[,,c])[1],
+                  fitType='parametric') %>% t()
+  z_tbm[,,c] <-vst(round(t(z_tbm[,,c])),
+                  blind=T,
+                  nsub=dim(z_tbm[,,c])[1],
+                  fitType='parametric') %>% t()
+  z_tbm26[,,c] <-vst(round(t(z_tbm26[,,c])),
+                  blind=T,
+                  nsub=dim(z_tbm26[,,c])[1],
+                  fitType='parametric') %>% t()
+  z_tbm27[,,c] <-vst(round(t(z_tbm27[,,c])),
+                blind=T,
+                nsub=dim(z_tbm27[,,c])[1],
+                fitType='parametric') %>% t()
+}
 ```
 
 #### 3.5.1. Cell Types Proportion
@@ -737,10 +778,6 @@ dev.off()
 ```
 
 #### 3.5.1.1. Cell counts
-
-```{r}
-WBC_df
-```
 
 ```{r}
 WBC_df <- clinical_data_HC_CNS_IF_PTB_TBM[,c('LIMS_ID','WBC')]
@@ -1408,3 +1445,113 @@ p1 <- as.ggplot(p01)
 ### 3.10. Association of CNIH4 with IFN pathway from GO/Reactome database (ssGSEA)
 
 ### 3.11. Association of CNIH4 with pro-inflamatory and anti-inflamatory cytokines
+
+### 3.12. AUC of TB vs Healthy using CNIH4, PD-L1, PD1
+
+```{r}
+library(pacman)
+pacman::p_load(
+  rio,         # importing data
+  here,        # relative file pathways
+  janitor,     # data cleaning and tables
+  lubridate,   # working with dates
+  tidyverse,   # data management and visualization
+  dplyr,       # data manipulation
+  naniar,      # package for "Replace with NA"
+  purrr,       # iteration
+  stringr,     # many functions for handling strings
+  pROC,        # ROC curve and AUC
+  ROCR,        # Visualizing the Performance of Scoring Classifiers
+  mgcv,        # Gam model with cross validation
+  splines,     # Regression Spline Functions and Classes
+  rms,
+  data.table  # XGBoost preparation data
+)
+```
+
+```{r}
+# genename <- 'CNIH4'
+# 
+# ptb_ct40 <- vst_data %>% select(c('LIMS_ID',genename,'CT_mean')) %>% filter(CT_mean==40)
+# tbm_ct40 <- Data_26_27_CT %>% mutate(CT_mean=NAT) %>% select(c('LIMS_ID',genename,'CT_mean')) %>% filter(CT_mean==40)
+# row.names(tbm_ct40) <- tbm_ct40$LIMS_ID
+# ptb_tbm_ct40 <- rbind(ptb_ct40,tbm_ct40)
+# healthy <- healthy_df %>% select(c('LIMS_ID',genename))
+# 
+# 
+
+genename <- 'CNIH4'
+ptb_ct40 <- vst_data %>% select(c('LIMS_ID',genename,'CT_mean')) %>% filter(CT_mean==40)
+tbm_ct40 <- merge(Data_26_27_CT[,c('LIMS_ID','NAT')],TBM_df,by='LIMS_ID') %>% mutate(CT_mean=NAT) %>% select(c('LIMS_ID',genename,'CT_mean')) %>% filter(CT_mean==40)
+row.names(tbm_ct40) <- tbm_ct40$LIMS_ID
+ptb_tbm_ct40 <- rbind(ptb_ct40,tbm_ct40)
+healthy <- healthy_df %>% select(c('LIMS_ID',genename))
+
+#write.csv(ptb_tbm_ct40,'ptb_tbm_ct40_CNIH4.csv',row.names = FALSE)
+#write.csv(healthy,'healthy_CNIH4.csv',row.names = FALSE)
+
+data_TB <- ptb_tbm_ct40 %>% 
+  dplyr::mutate(
+    phenotype = 1
+  ) %>% 
+  dplyr::select(-c(CT_mean))
+
+data_healthy <- healthy %>% 
+  dplyr::mutate(
+    phenotype = 0
+  )
+
+data_combine <- rbind(data_TB, data_healthy)
+```
+
+```{r}
+par(pty = "s")
+
+roc <- plot.roc(data_combine$phenotype, data_combine[,genename]) 
+
+ci.sp <- ci.sp(roc, sensitivities=seq(0, 1, .01), boot.n=100)
+
+p <- data_combine %>% 
+  roc(phenotype, 
+      predictor = c(get(genename)), 
+      plot = TRUE, 
+      legacy.axes = TRUE,
+    percent = FALSE, xlab = "1 - Specificity", 
+    ylab = "Sensitivity", col = "#377eb8", lwd = 5,
+    print.auc = TRUE, print.auc.x = 0.55, ci = TRUE)
+
+plot(ci.sp, type="shape", col="#377eb822")
+title(main = 'PD1')
+```
+
+```{r}
+dd <-  datadist (data_combine); options ( datadist = "dd")
+
+fit <- lrm (phenotype ~ CNIH4 , data = data_combine, x = TRUE, y = TRUE )
+
+set.seed(12345)
+model_valid <- validate(fit, B = 10000)
+model_valid
+#  index.orig training    test optimism index.corrected     n
+# Dxy           0.7102   0.7096  0.7102  -0.0006          0.7109 10000
+# R2            0.3432   0.3474  0.3432   0.0042          0.3390 10000
+# Intercept     0.0000   0.0000 -0.0310   0.0310         -0.0310 10000
+# Slope         1.0000   1.0000  1.0032  -0.0032          1.0032 10000
+# Emax          0.0000   0.0000  0.0078   0.0078          0.0078 10000
+# D             0.2103   0.2140  0.2103   0.0038          0.2065 10000
+# U            -0.0097  -0.0097 -0.0001  -0.0096         -0.0001 10000
+# Q             0.2200   0.2237  0.2104   0.0134          0.2066 10000
+# B             0.1011   0.0993  0.1025  -0.0032          0.1043 10000
+# g             2.9300   3.0243  2.9300   0.0943          2.8357 10000
+# gp            0.1734   0.1728  0.1734  -0.0006          0.1741 10000
+
+auc_corrected <- (model_valid[1,5]/2) +0.5
+auc_corrected #[1] 0.8554285
+```
+
+```{r}
+fit_glm <- glm(phenotype ~ CNIH4 , data = data_combine, family=binomial)
+prob1 = predict(fit_glm, type='response', data_combine)
+pred1 = prediction(prob1, data_combine$phenotype)
+performance(pred1,"auc")@y.values[[1]][1]
+```
