@@ -19,18 +19,18 @@ knitr::opts_chunk$set(
 	message = FALSE,
 	warning = FALSE)
 
-library(parallel)
-mcore<-1 # for Window PC
+#library(parallel)
+#mcore<-1 # for Window PC
 
 #Load libraries
-library(dplyr)
-library(plyr)
+#library(dplyr)
+#library(plyr)
 library(readxl)
 library(writexl)
 library(survival)
 library(glmnet)
 library(stabs)
-library(tidyverse)
+#library(tidyverse)
 library(magrittr)
 library(Hmisc)
 library(gtsummary)
@@ -41,21 +41,35 @@ library(gridExtra)
 library(ggcorrplot)
 library(broom)
 library(rms)
-library(tidyverse)
-library(stabs)
 library(mboost)
 library(DESeq2)
 library(CEMiTool)
 library(igraph)
 library(flextable)
-library(pheatmap)
-library(ggplot2)
+#library(pheatmap)
+#library(ggplot2)
 library(ggplotify)
+library(stringr)
+#library(InstaPrism)
 
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
 path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Triet_Results")
+```
+
+```{r}
+bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy_newman_01_01.rdata")))
+bp.res_ptb <- get(load(file=paste0(path_input,"Data/bp.res_ptb_newman_01_01.rdata")))
+bp.res_tbm <- get(load(file=paste0(path_input,"Data/bp.res_tbm_newman_01_01.rdata")))
+
+
+
+
+```
+
+```{r}
+load(paste0(path_input,'Data/clinical_data_HC_CNS_IF_PTB_TBM.RData'))
 ```
 
 ```{r}
@@ -245,6 +259,10 @@ get_theta <- function(bp) {
 ## 3. Main Analysis
 
 ### 3.1. Correlation Heatmap CNIH4 vs 27 ICs
+
+```{r}
+read.csv('W:\\#oucr-tb\\BayesPrism\\data\\Newmandata\\newman_counts.txt')
+```
 
 ```{r}
 IC_names<-c('CD200', 'CD2','CD58','TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
@@ -617,6 +635,7 @@ to_vec(for(i in 1:5) sqrt(sum((tmp4[,c2[i]]-tmp6[,c2[i]])^2)))
 #### 3.5.0. Extract data from BayesPrism results
 
 ```{r}
+library(InstaPrism)
 
 get_theta <- function(bp) {
   theta <- get.fraction (bp=bp,
@@ -628,22 +647,37 @@ get_theta <- function(bp) {
   theta <- theta[ order(row.names(theta)), ]
   theta$Lymphocyte <- theta$B + theta$CD4T + theta$CD8T + theta$NK
   return(theta)
-}
+} #bayesprism
+
+get_theta1 <- function(bp) {
+  theta <- as.data.frame(t(bp@theta))
+  row.names(theta) <- gsub("X", "", row.names(theta))
+  row.names(theta) <- gsub("_PBMC", "", row.names(theta))
+  theta <- theta[ order(row.names(theta)), ]
+  theta$Lymphocyte <- theta$B + theta$CD4T + theta$CD8T + theta$NK
+  return(theta)
+} #instaprism
+
 
 #load BayesPrism result
-bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy.rdata")))
-bp.res_ptb <- get(load(file=paste0(path_input,"Data/bp.res_ptb.rdata")))
-bp.res_tbm <- get(load(file=paste0(path_input,"Data/bp.res_tbm.rdata")))
+# bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy.rdata")))
+# bp.res_ptb <- get(load(file=paste0(path_input,"Data/bp.res_ptb.rdata")))
+# bp.res_tbm <- get(load(file=paste0(path_input,"Data/bp.res_tbm.rdata")))
+
+bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy_newman_01_01.rdata")))
+bp.res_ptb <- get(load(file=paste0(path_input,"Data/bp.res_ptb_newman_01_01.rdata")))
+bp.res_tbm <- get(load(file=paste0(path_input,"Data/bp.res_tbm_newman_01_01.rdata")))
+
 
 # Get cell proportion for each patient
 id26TB <- All_sample_RNAseq %>% subset(Study %in% c("26TB") & timepoint=='D0') %>% select('LIMS_ID')
 id27TB <- All_sample_RNAseq %>% subset(Study %in% c("27TB") & timepoint=='D0') %>% select('LIMS_ID')
 
 theta_ptb <- get_theta(bp.res_ptb)
-theta_tbm <- get_theta(bp.res_tbm)
+theta_tbm <- get_theta1(bp.res_tbm)
 theta_tbm26 <- theta_tbm[id26TB$LIMS_ID,]
 theta_tbm27 <- theta_tbm[id27TB$LIMS_ID,]
-theta_healthy <- get_theta(bp.res_healthy)
+theta_healthy <- get_theta1(bp.res_healthy)
 
 theta_ptb_long <- pivot_longer(theta_ptb,CD8T:Neutrophil)
 theta_ptb_long$group <- rep('PTB',each=dim(theta_ptb_long)[1])
@@ -658,11 +692,16 @@ theta_healthy_long$group <- rep('Healthy',each=dim(theta_healthy_long)[1])
 theta_long<-rbind(theta_ptb_long,theta_tbm27_long,theta_tbm26_long,theta_healthy_long)
 
 # Get z estimation for each cell type for each group
-z_healthy <- get.exp(bp=bp.res_healthy, state.or.type="type")
 z_ptb <- get.exp(bp=bp.res_ptb, state.or.type="type")
-z_tbm <- get.exp(bp=bp.res_tbm, state.or.type="type")
+z_healthy <- get_Z_array(bp.res_healthy, resolution = 'ct', n.core = 7)
+z_tbm <- get_Z_array(bp.res_tbm, resolution = 'ct', n.core = 7)
 z_tbm26 <- z_tbm[id26TB$LIMS_ID,,]
 z_tbm27 <- z_tbm[id27TB$LIMS_ID,,]
+
+#z_healthy <- get.exp(bp=bp.res_healthy, state.or.type="type")
+#z_tbm <- get.exp(bp=bp.res_tbm, state.or.type="type")
+#z_tbm26 <- z_tbm[id26TB$LIMS_ID,,]
+#z_tbm27 <- z_tbm[id27TB$LIMS_ID,,]
 
 #vst transform
 for (c in colnames(z_healthy[1,,])) {
@@ -687,65 +726,32 @@ for (c in colnames(z_healthy[1,,])) {
                 nsub=dim(z_tbm27[,,c])[1],
                 fitType='parametric') %>% t()
 }
+
+gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
+           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE
+           )
+gt <- na.omit(gt)
+rownames(gt) <- gt$LIMS_ID
+gt$LIMS_ID <- NULL
+
 ```
 
-#### 3.5.1. Cell Types Proportion
-
-```{r}
-bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy.rdata")))
-bp.res_ptb <- get(load(file=paste0(path_input,"Data/bp.res_ptb.rdata")))
-bp.res_tbm <- get(load(file=paste0(path_input,"Data/bp.res_tbm.rdata")))
-```
-
-```{r}
-get_theta <- function(bp) {
-  theta <- get.fraction (bp=bp,
-            which.theta="final",
-            state.or.type="type")
-  theta <- as.data.frame(theta)
-  row.names(theta) <- gsub("X", "", row.names(theta))
-  row.names(theta) <- gsub("_PBMC", "", row.names(theta))
-  theta <- theta[ order(row.names(theta)), ]
-  theta$Lymphocyte <- theta$B + theta$CD4T + theta$CD8T + theta$NK
-  return(theta)
-}
-```
+#### 3.5.1.0. Cell Types Proportion
 
 ```{r}
 library(rstatix)
 library(ggpubr)
 
-id26TB <- All_sample_RNAseq %>% subset(Study %in% c("26TB") & timepoint=='D0') %>% select('LIMS_ID')
-id27TB <- All_sample_RNAseq %>% subset(Study %in% c("27TB") & timepoint=='D0') %>% select('LIMS_ID')
-
-theta1 <- get_theta(bp.res_ptb)
-theta2 <- get_theta(bp.res_tbm)
-theta2_1 <- theta2[id26TB$LIMS_ID,]
-theta2_2 <- theta2[id27TB$LIMS_ID,]
-theta3 <- get_theta(bp.res_healthy)
-
-tmp1 <- pivot_longer(theta1,CD8T:Neutrophil)
-tmp1$group <- rep('PTB',each=dim(tmp1)[1])
-tmp2<- pivot_longer(theta2,CD8T:Neutrophil)
-tmp2$group <- rep('TBM',each=dim(tmp2)[1])
-
-tmp2_1<- pivot_longer(theta2_1,CD8T:Neutrophil)
-tmp2_1$group <- rep('TBM (HIV+)',each=dim(tmp2_1)[1])
-tmp2_2<- pivot_longer(theta2_2,CD8T:Neutrophil)
-tmp2_2$group <- rep('TBM (HIV-)',each=dim(tmp2_2)[1])
-
-tmp3 <- pivot_longer(theta3,CD8T:Neutrophil)
-tmp3$group <- rep('Healthy',each=dim(tmp3)[1])
-tmp<-rbind(tmp1,tmp2_1,tmp2_2,tmp3)
-
-stat.test <- tmp %>% 
+stat.test <- theta_long %>% 
   group_by(name) %>%
   wilcox_test(value ~ group) %>%
   add_significance("p") %>%
   #filter(p.signif !="ns") %>%
   add_y_position(step.increase = 0.06)
 
-p <- ggplot(data=tmp,
+p <- ggplot(data=theta_long,
        aes(x = factor(group, level = c('Healthy','PTB','TBM (HIV+)','TBM (HIV-)')),
            color=factor(group, level = c('Healthy','PTB','TBM (HIV+)','TBM (HIV-)')),
            y=value,))+
@@ -772,9 +778,9 @@ p <- ggplot(data=tmp,
   stat_pvalue_manual(stat.test, 
                      label = 'p.signif',
                      tip.length = 0,vjust=0.2)
-png(file=paste0(path_output,"/BayesPrism_CellPops.png"),res=900, units = 'in', width=17, height = 7)
+#png(file=paste0(path_output,"/BayesPrism_CellPops.png"),res=900, units = 'in', width=17, height = 7)
 p
-dev.off()
+#dev.off()
 ```
 
 #### 3.5.1.1. Cell counts
@@ -783,48 +789,60 @@ dev.off()
 WBC_df <- clinical_data_HC_CNS_IF_PTB_TBM[,c('LIMS_ID','WBC')]
 row.names(WBC_df) <- WBC_df$LIMS_ID
 
-tmp <- merge(theta1,WBC_df,by=0)
-theta1_count <- data.frame(B = tmp$B*tmp$WBC,
-                           CD4T = tmp$CD4T*tmp$WBC,
-                           CD8T = tmp$CD8T*tmp$WBC,
-                           NK = tmp$NK*tmp$WBC,
-                           Monocyte = tmp$Monocyte*tmp$WBC,
-                           Neutrophil = tmp$Neutrophil*tmp$WBC)
+wbc <- WBC_df[rownames(theta_ptb),]$WBC
+theta_ptb_count <- theta_ptb*wbc
+wbc <- WBC_df[rownames(theta_tbm),]$WBC
+theta_tbm_count <- theta_tbm*wbc
+wbc <- WBC_df[rownames(theta_tbm26),]$WBC
+theta_tbm26_count <- theta_tbm26*wbc
+wbc <- WBC_df[rownames(theta_tbm27),]$WBC
+theta_tbm27_count <- theta_tbm27*wbc
+wbc <- WBC_df[rownames(theta_healthy),]$WBC
+theta_healthy_count <- theta_tbm*wbc
 
-tmp <- merge(theta2_1,WBC_df,by=0)
-theta2_1_count <- data.frame(B = tmp$B*tmp$WBC,
-                           CD4T = tmp$CD4T*tmp$WBC,
-                           CD8T = tmp$CD8T*tmp$WBC,
-                           NK = tmp$NK*tmp$WBC,
-                           Monocyte = tmp$Monocyte*tmp$WBC,
-                           Neutrophil = tmp$Neutrophil*tmp$WBC)
+# 
+# 
+# tmp <- merge(theta1,WBC_df,by=0)
+# theta1_count <- data.frame(B = tmp$B*tmp$WBC,
+#                            CD4T = tmp$CD4T*tmp$WBC,
+#                            CD8T = tmp$CD8T*tmp$WBC,
+#                            NK = tmp$NK*tmp$WBC,
+#                            Monocyte = tmp$Monocyte*tmp$WBC,
+#                            Neutrophil = tmp$Neutrophil*tmp$WBC)
+# 
+# tmp <- merge(theta2_1,WBC_df,by=0)
+# theta2_1_count <- data.frame(B = tmp$B*tmp$WBC,
+#                            CD4T = tmp$CD4T*tmp$WBC,
+#                            CD8T = tmp$CD8T*tmp$WBC,
+#                            NK = tmp$NK*tmp$WBC,
+#                            Monocyte = tmp$Monocyte*tmp$WBC,
+#                            Neutrophil = tmp$Neutrophil*tmp$WBC)
+# 
+# tmp <- merge(theta2_2,WBC_df,by=0)
+# theta2_2_count <- data.frame(B = tmp$B*tmp$WBC,
+#                            CD4T = tmp$CD4T*tmp$WBC,
+#                            CD8T = tmp$CD8T*tmp$WBC,
+#                            NK = tmp$NK*tmp$WBC,
+#                            Monocyte = tmp$Monocyte*tmp$WBC,
+#                            Neutrophil = tmp$Neutrophil*tmp$WBC)
+# tmp <- merge(theta3,WBC_df,by=0)
+# theta3_count <- data.frame(B = tmp$B*tmp$WBC,
+#                            CD4T = tmp$CD4T*tmp$WBC,
+#                            CD8T = tmp$CD8T*tmp$WBC,
+#                            NK = tmp$NK*tmp$WBC,
+#                            Monocyte = tmp$Monocyte*tmp$WBC,
+#                            Neutrophil = tmp$Neutrophil*tmp$WBC)
 
-tmp <- merge(theta2_2,WBC_df,by=0)
-theta2_2_count <- data.frame(B = tmp$B*tmp$WBC,
-                           CD4T = tmp$CD4T*tmp$WBC,
-                           CD8T = tmp$CD8T*tmp$WBC,
-                           NK = tmp$NK*tmp$WBC,
-                           Monocyte = tmp$Monocyte*tmp$WBC,
-                           Neutrophil = tmp$Neutrophil*tmp$WBC)
-tmp <- merge(theta3,WBC_df,by=0)
-theta3_count <- data.frame(B = tmp$B*tmp$WBC,
-                           CD4T = tmp$CD4T*tmp$WBC,
-                           CD8T = tmp$CD8T*tmp$WBC,
-                           NK = tmp$NK*tmp$WBC,
-                           Monocyte = tmp$Monocyte*tmp$WBC,
-                           Neutrophil = tmp$Neutrophil*tmp$WBC)
-
-tmp1 <- pivot_longer(theta1_count,B:Neutrophil)
+tmp1 <- pivot_longer(theta_ptb_count,CD8T:Neutrophil)
 tmp1$value <- log10(tmp1$value)
 tmp1$group <- rep('PTB',each=dim(tmp1)[1])
-
-tmp2_1<- pivot_longer(theta2_1_count,B:Neutrophil)
+tmp2_1<- pivot_longer(theta_tbm26_count,CD8T:Neutrophil)
 tmp2_1$value <- log10(tmp2_1$value)
 tmp2_1$group <- rep('TBM (HIV+)',each=dim(tmp2_1)[1])
-tmp2_2<- pivot_longer(theta2_2_count,B:Neutrophil)
+tmp2_2<- pivot_longer(theta_tbm27_count,CD8T:Neutrophil)
 tmp2_2$value <- log10(tmp2_2$value)
 tmp2_2$group <- rep('TBM (HIV-)',each=dim(tmp2_2)[1])
-tmp3 <- pivot_longer(theta3_count,B:Neutrophil)
+tmp3 <- pivot_longer(theta_healthy_count,CD8T:Neutrophil)
 tmp3$value <- log10(tmp3$value)
 tmp3$group <- rep('Healthy',each=dim(tmp3)[1])
 tmp<-rbind(tmp1,tmp2_1,tmp2_2,tmp3)
@@ -1188,6 +1206,67 @@ p <- ggplot(data=tmp,
 png(file=paste0(path_output,"/BayesPrism_ssGSEA_TCRsignal.png"),res=900, units = 'in', width=17, height =10)
 p
 dev.off()
+```
+
+#### 3.5.6. Regression plot
+
+```{r}
+
+library(ggpmisc)
+library(ggpubr)
+library(cowplot)
+library(ggplot2)
+library(Metrics)
+
+theta <- theta_healthy #input theta_ptb, theta_tbm, theta_healthy
+
+theta1 <- theta[row.names(gt),]
+theta1 <- na.omit(theta1)
+gt1 <- gt[row.names(theta1),]
+
+
+cell_list = c('Lymphocyte','Monocyte',"Neutrophil")
+p <- list()
+
+for (i in 1:length(cell_list)) {
+  c <- cell_list[i]
+  
+  df <- data.frame(predicted=theta1[,c]*100,groundtruth=gt1[,c])
+  rmse <- rmse(theta1[,c]*100,gt1[,c])
+  p1<-ggplot(data=df, aes(x=groundtruth,y=predicted))+
+      geom_point(alpha=0.8,col='red')+
+      theme_bw()+
+      stat_poly_line(se=T) +
+      stat_cor(cor.coef.name = "r",size = 7,method = 'pearson')+
+      theme_bw()+
+      ylab(paste0(c," predicted"))+
+      xlab(paste0(c," groundtruth"))+
+    ggtitle(paste0("PTB, ","RMSE = ",round(rmse,2)))+
+      theme(plot.title = element_text(size = 15),
+            legend.position = "none",
+            axis.text = element_text(size = 15),
+            axis.text.x=element_text(color="black",size=13,face="bold"),
+            axis.title.x = element_text(size = 15,color="black",face="bold"),
+            axis.text.y=element_text(color="black",size=15),
+            axis.title.y = element_text(size = 15,color="black",face="bold"),
+            legend.text = element_text(size = 15),
+            legend.title = element_text( colour="black", size=12),
+            legend.key = element_rect(colour = NA),
+            strip.text=element_text(face = "bold",size=12))
+  p[[i]] <-ggdraw(p1)
+}
+
+regs <- ggpubr::ggarrange(
+p[[1]],
+p[[2]],
+p[[3]],
+
+ncol =3,nrow=1)
+
+#png(file="scatterplot_BayesPrism.png",res=600, units = 'in', width=45, height =30) #30:18
+regs
+#dev.off()
+
 ```
 
 ### 3.6. DESEQ2 Analysis
@@ -1554,4 +1633,92 @@ fit_glm <- glm(phenotype ~ CNIH4 , data = data_combine, family=binomial)
 prob1 = predict(fit_glm, type='response', data_combine)
 pred1 = prediction(prob1, data_combine$phenotype)
 performance(pred1,"auc")@y.values[[1]][1]
+```
+
+# 4. Draft analysis
+
+```{r}
+library(ggrepel)
+
+load(paste0(path_input,'Data/Module_discovery.Rdata'))
+load(paste0(path_input,'Data/Gene Significance and Module Membership_log2_CT.Rdata'))
+
+anno_coding <- subset(anno,class=="protein_coding")
+# We only focus on the significant modules, with FDR<0.1 in both discovery and validation cohort
+# Combine the p value from modules-traits association from two cohorts
+moduleTraitPvalue_1<-as.data.frame(moduleTraitPvalue.adj[[1]])
+moduleTraitPvalue_2<-as.data.frame(moduleTraitPvalue.adj[[2]])
+colnames(moduleTraitPvalue_1)<-paste0(colnames(moduleTraitPvalue_1),"_discovery")
+colnames(moduleTraitPvalue_2)<-paste0(colnames(moduleTraitPvalue_2),"_validation")
+moduleTraitPvalue_wide<-cbind(moduleTraitPvalue_1,moduleTraitPvalue_2)
+# Combine the correlation from modules-traits association from two cohorts
+moduleTraitCor_1<-as.data.frame(moduleTraitCor[[1]])
+moduleTraitCor_2<-as.data.frame(moduleTraitCor[[2]])
+colnames(moduleTraitCor_1)<-paste0(colnames(moduleTraitCor_1),"_discovery")
+colnames(moduleTraitCor_2)<-paste0(colnames(moduleTraitCor_2),"_validation")
+moduleTraitCor_wide<-cbind(moduleTraitCor_1,moduleTraitCor_2)
+
+selected_modules<-moduleTraitPvalue_wide%>% filter(log2_CT_discovery<0.1&log2_CT_validation<0.1) %>% rownames()
+upregulated_modules<-selected_modules
+p<-list()
+output_hubs<-data.frame()
+modNames = names(MEs[[1]]$data)
+
+for(i in 1:length(upregulated_modules)){
+  module<-upregulated_modules[i]
+  modNames<-modNames
+  column<-match(module,modNames);
+  moduleGenes<-(moduleColors==module);
+
+  selected_module<-data.frame(MM=geneModuleMembership[moduleGenes,column],
+                           GA=-geneTraitAssociation_log2_CT[moduleGenes,1],
+                           GS=geneTraitSignificant_log2_CT[moduleGenes,1])
+
+  # Identify the hub genes as the genes above the 5% and 95% quantiles for two directional selection
+  MM_cutoff <- quantile(selected_module$MM,prob=c(0.025,0.975))
+  GA_cutoff <- quantile(selected_module$GA,prob=c(0.025,0.975))
+
+  GAMM <- selected_module %>% mutate(gene=rownames(geneModuleMembership)[moduleGenes],
+                                  module=module)
+
+  selected_genes_module <- subset(GAMM,((MM < MM_cutoff[1])|(MM > MM_cutoff[2]))& ((GA < GA_cutoff[1])|(GA > GA_cutoff[2]))) %>% filter(gene %in% anno_coding$gene_symbol)
+  ggplot(data=GAMM,aes(x=MM,y=GA))+
+  geom_point(alpha=0.1,col="#313695",size=3)+
+  theme_bw()+stat_poly_line(se=F) +
+  xlab("Module Membership (PC1)")+
+  ylab("Association between genes with bacterial load
+")+
+  geom_hline(yintercept=GA_cutoff,col="red",alpha=0.5,linetype="dashed")+
+  geom_vline(xintercept=MM_cutoff,col="red",alpha=0.5,linetype="dashed")+
+  geom_point(data=selected_genes_module,aes(x=MM,y=GA),col="#313695",size=1.5,alpha=0.9)+
+  geom_text_repel(data=selected_genes_module,aes(x=MM,y=GA,label=gene),size=3.5,col="#A50026")+
+  stat_poly_line(se=T) +
+  stat_cor(size = 7,cor.coef.name = "r")+
+  theme_bw()+
+  theme(plot.title = element_text(size = 15),
+        legend.position = "none",
+        axis.text = element_text(size = 15),
+        axis.text.x=element_text(color="black",size=13,face="bold"),
+        axis.title.x = element_text(size = 15,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=15),
+        axis.title.y = element_text(size = 15,color="black",face="bold"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(colour="black", size=12),
+        legend.key = element_rect(colour = NA),
+        strip.text=element_text(face = "bold",size=12))
+
+
+
+
+  }
+
+selected_genes_module$gene
+```
+
+```{r}
+common_gene <- c("GATAD2B","SMARCA5","ARNT","PRDM10","EED","EHMT2","ZNF146","TCF12","ATF4","RELB","YBX1","CREM","SP1","TRIM22","JUNB","BCLAF1","POLR2A","IRF9","ATF3","RAD51","NFRKB","NFIC","NKRF","RB1","USF2","ZNF592","MTA2","MEF2D","KLF5","BACH1","MAFG","ZNF207","HDAC2","EP300","SMAD5","EBF1","CEBPB","TARDBP","BCL11A","MTA3","ATF1","NR2F2","FOS","REST","ELF1","MEIS2","PKNOX1","KDM1A","HDGF","NFE2","ZNF24","ZNF217","ARID3A","BATF","ATF2","NR2F1","YY1","BHLHE40","HMBOX1","MAFF","MAX","NFE2L2","RFX5","IKZF1","RUNX3","SPI1","TAF1","SIN3A","ASH2L","JUND","MLLT1","TBL1XR1","TBP","EMSY","NBN","ZNF316","BCOR","TAF7","RCOR1","IKZF2","DPF2","MAFK","ZNF687")
+```
+
+```{r}
+dim(selected_genes_module)
 ```
