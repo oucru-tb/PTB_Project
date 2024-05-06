@@ -1639,7 +1639,9 @@ performance(pred1,"auc")@y.values[[1]][1]
 
 ```{r}
 library(ggrepel)
-
+library(tidyverse)
+library(ggpmisc)
+library(ggpubr)
 load(paste0(path_input,'Data/Module_discovery.Rdata'))
 load(paste0(path_input,'Data/Gene Significance and Module Membership_log2_CT.Rdata'))
 
