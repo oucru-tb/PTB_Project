@@ -23,14 +23,14 @@ knitr::opts_chunk$set(
 #mcore<-1 # for Window PC
 
 #Load libraries
-#library(dplyr)
-#library(plyr)
+library(dplyr)
+library(plyr)
 library(readxl)
 library(writexl)
 library(survival)
 library(glmnet)
 library(stabs)
-#library(tidyverse)
+library(tidyverse)
 library(magrittr)
 library(Hmisc)
 library(gtsummary)
@@ -46,10 +46,11 @@ library(DESeq2)
 library(CEMiTool)
 library(igraph)
 library(flextable)
-#library(pheatmap)
-#library(ggplot2)
+library(pheatmap)
+library(ggplot2)
 library(ggplotify)
 library(stringr)
+
 #library(InstaPrism)
 
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
@@ -59,17 +60,27 @@ path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
 ```
 
 ```{r}
-bp.res_healthy <- get(load(file=paste0(path_input,"Data/bp.res_healthy_newman_01_01.rdata")))
-bp.res_ptb <- get(load(file=paste0(path_input,"Data/bp.res_ptb_newman_01_01.rdata")))
-bp.res_tbm <- get(load(file=paste0(path_input,"Data/bp.res_tbm_newman_01_01.rdata")))
+load(paste0(path_input,"Data/deconvolution_results/bp.res_ptb_SCnewman_01_01.RData"))
+load(paste0(path_input,"Data/deconvolution_results/bp.res_healthy_SCnewman_01_01.RData"))
+load(paste0(path_input,"Data/deconvolution_results/bp.res_tbm_SCnewman_01_01.RData"))
 
-
-
-
-```
-
-```{r}
-load(paste0(path_input,'Data/clinical_data_HC_CNS_IF_PTB_TBM.RData'))
+# bp.res_ptb <- get(load(file=paste0(path_input,"Data/deconvolution_results/bp.res_ptb_newman_01_01.rdata"))) #bayesprism
+# bp.res_healthy <- get(load(file=paste0(path_input,"Data/deconvolution_results/bp.res_healthy_newman_01_01.rdata"))) #instaprism
+# bp.res_tbm <- get(load(file=paste0(path_input,"Data/deconvolution_results/bp.res_tbm_newman_01_01.rdata"))) #instaprism
+# 
+# ########### PTB ##################
+# ptb.theta <- as.data.frame(get.fraction(bp=bp.res_ptb, which.theta="final",state.or.type="type"))
+# #ptb.theta.cv<- bp.res_ptb@posterior.theta_f@theta.cv
+# ptb.z <- get.exp(bp=bp.res_ptb,state.or.type="type")
+# save(ptb.theta,ptb.z,file = paste0(path_input,"Data/deconvolution_results/bp.res_ptb_SCnewman_01_01.RData"))
+# 
+# healthy.theta <- as.data.frame(t(bp.res_healthy@theta))
+# healthy.z <- get_Z_array(bp.res_healthy, resolution = 'ct', n.core = 7)
+# save(healthy.theta, healthy.z, file = paste0(path_input,"Data/deconvolution_results/bp.res_healthy_SCnewman_01_01.RData"))
+# 
+# tbm.theta <- as.data.frame(t(bp.res_tbm@theta))
+# tbm.z <- get_Z_array(bp.res_tbm, resolution = 'ct', n.core = 7)
+# save(tbm.theta, tbm.z, file = paste0(path_input,"Data/deconvolution_results/bp.res_tbm_SCnewman_01_01.RData"))
 ```
 
 ```{r}
@@ -101,7 +112,6 @@ rownames(TOM1) <- colnames(multiExpr[[1]]$data)
 
 clinical_2_discovery <- filter(clinical_2, cohort=='Discovery')
 rownames(clinical_2_discovery) <- clinical_2_discovery$LIMS_ID
-
 
 ###------ImputeCIBERSORT------###
 impute_df <-  read.csv(paste0(path_input,'/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt'),sep='\t') %>% filter(P.value<0.05)
@@ -143,6 +153,12 @@ dim(vst_data2) # 295 31427
 ## 2. Helper functions
 
 ```{r}
+
+library(ComplexHeatmap)
+library(circlize)
+
+
+
 posterior_predict_hurdle_gaussian <- function(i, prep, ...) {
   mu <- brms::get_dpar(prep, "mu", i = i)
   sigma <- brms::get_dpar(prep, "sigma", i = i)
@@ -261,22 +277,21 @@ get_theta <- function(bp) {
 ### 3.1. Correlation Heatmap CNIH4 vs 27 ICs
 
 ```{r}
-read.csv('W:\\#oucr-tb\\BayesPrism\\data\\Newmandata\\newman_counts.txt')
-```
-
-```{r}
 IC_names<-c('CD200', 'CD2','CD58','TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
              'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
              'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
              'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9',
             'TMED9','TGFA','GLI1','CNIH4')
+
+
+
 ICvsCNIH4_df <- vst_data %>% select(IC_names)
-ICvsCNIH4_df <- ICvsCNIH4_df[vapply(ICvsCNIH4_df, 
-                                    function(x) length(unique(x)) > 1, 
-                                    logical(1L))] %>% dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
-                                                                    'CD274/PDL1'='CD274',
-                                                                    'LGALS9/Galactin-9'='LGALS9',
-                                                                    'PDCD1/PD1'='PDCD1')
+# ICvsCNIH4_df <- ICvsCNIH4_df[vapply(ICvsCNIH4_df, 
+#                                     function(x) length(unique(x)) > 1, 
+#                                     logical(1L))] %>% dplyr::rename('HAVCR2/TIM-3'='HAVCR2',
+#                                                                     'CD274/PDL1'='CD274',
+#                                                                     'LGALS9/Galactin-9'='LGALS9',
+#                                                                     'PDCD1/PD1'='PDCD1')
 cor_method = 'spearman'
 ICvsCNIH4_mat <- cor(ICvsCNIH4_df,
                       use='pairwise.complete.obs',
@@ -290,6 +305,7 @@ p.ICvsCNIH4_mat <- cor.pval.test(ICvsCNIH4_df,
 #col=c("#001164", 'white', "#FF681E")
 #col=c("#5E81AC", '#EBCB8B', "#BF616A")
 col=c("#395b85", 'white', "#FF681E")
+#col=c("#243b51","#4e80b1",'#b5c8e2', 'white', '#feab63',"#fe9250","#fe7a29")
 # CNIH4 vs 25 ICs
 mat1 <- ICvsCNIH4_mat
 p.mat1 <- p.ICvsCNIH4_mat
@@ -305,11 +321,58 @@ p01 <- pheatmap(vals1,
                color = colorRampPalette(col)(1000),
                breaks=myBreaks,
                display_numbers=labels1,
-               show_colnames = F,legend = F)
+               show_colnames = T,legend = T)
 p01
 row.order <- p01$tree_row$order
 col.order <- p01$tree_col$order
 p1 <- as.ggplot(p01)
+
+library(NatParksPalettes)
+names(NatParksPalettes)
+```
+
+Complex Heatmap
+
+```{r}
+
+genes<-c('STAT1','CNIH4', 'CD274','AIM2','ATF3','CT_mean')
+
+genes<-c('CD200', 'CD2','CD58','TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18',
+             'CD28','BTLA', 'CD27', 'HAVCR2', 'CD274', 'TNFSF14', 'TNFRSF4',
+             'CD276', 'TNFRSF14', 'PDCD1', 'CD86', 'TNFSF9', 'TIGIT','CD80',
+             'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9',
+            'TMED9','TGFA','GLI1','CNIH4')
+
+df <- vst_data %>% select(genes)
+mat <- cor(df, use='pairwise.complete.obs',method = cor_method)
+mat[p.mat>0.05] = 0
+p.mat <- cor.pval.test(df, df, method=cor_method, use='pairwise.complete.obs')
+
+
+col=c("#395b85", 'white', "#FF681E")
+col_fun = colorRamp2(seq(-1, 1, length = 3), col)
+Heatmap(mat,
+        name = 'corr.',
+        col = col_fun,
+        heatmap_legend_param = list(legend_height = unit(4, "cm")),
+        rect_gp = gpar(col = "black", lwd = 1),
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          if(i==j) grid.text(sprintf("%.f", mat[i, j]), x, y, gp = gpar(fontsize = 10))
+          if(i!=j & p.mat[i, j]<=0.05) grid.text(sprintf("%.2f", mat[i, j]), x, y, gp = gpar(fontsize = 10))},
+        column_names_rot = 45)
+```
+
+```{r}
+library(ggthemes)
+library(scales)
+
+palettes <- ggthemes_data[["tableau"]][["color-palettes"]][["regular"]]
+for (palname in names(palettes)) {
+  pal <- tableau_color_pal(palname)
+  max_n <- attr(pal, "max_n")
+  show_col(pal(max_n))
+  title(main = palname)
+}
 ```
 
 ### 3.2.0. Custom
@@ -606,9 +669,6 @@ tmp1 <- vsd_before[,c1]%>% as.data.frame()
 tmp2 <- vsd_before[,c2]%>% as.data.frame()
 
 
-
-
-
 tmp3 <- vsd_adj[,c1]%>% as.data.frame()
 tmp4 <- vsd_adj[,c2]%>% as.data.frame()
 to_vec(for(i in 1:5) sqrt(sum((tmp3[,c1[i]]-tmp4[,c2[i]])^2)))
@@ -778,6 +838,7 @@ p <- ggplot(data=theta_long,
   stat_pvalue_manual(stat.test, 
                      label = 'p.signif',
                      tip.length = 0,vjust=0.2)
+
 #png(file=paste0(path_output,"/BayesPrism_CellPops.png"),res=900, units = 'in', width=17, height = 7)
 p
 #dev.off()
@@ -1644,7 +1705,8 @@ library(ggpmisc)
 library(ggpubr)
 load(paste0(path_input,'Data/Module_discovery.Rdata'))
 load(paste0(path_input,'Data/Gene Significance and Module Membership_log2_CT.Rdata'))
-
+#load(paste0(path_input,"Data/PTB-02-networkConstruction-auto.RData"))
+  
 anno_coding <- subset(anno,class=="protein_coding")
 # We only focus on the significant modules, with FDR<0.1 in both discovery and validation cohort
 # Combine the p value from modules-traits association from two cohorts
