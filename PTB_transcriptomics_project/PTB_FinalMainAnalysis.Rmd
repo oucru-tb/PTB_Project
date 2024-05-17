@@ -50,9 +50,10 @@ library(pheatmap)
 library(ggplot2)
 library(ggplotify)
 library(stringr)
-
-#library(InstaPrism)
-
+library(ComplexHeatmap)
+library(circlize)
+library(rstatix)
+library(ggpubr)
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
 path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
@@ -60,9 +61,7 @@ path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
 ```
 
 ```{r}
-load(paste0(path_input,"Data/deconvolution_results/bp.res_ptb_SCnewman_01_01.RData"))
-load(paste0(path_input,"Data/deconvolution_results/bp.res_healthy_SCnewman_01_01.RData"))
-load(paste0(path_input,"Data/deconvolution_results/bp.res_tbm_SCnewman_01_01.RData"))
+#move to bayesprism notebook later!!
 
 # bp.res_ptb <- get(load(file=paste0(path_input,"Data/deconvolution_results/bp.res_ptb_newman_01_01.rdata"))) #bayesprism
 # bp.res_healthy <- get(load(file=paste0(path_input,"Data/deconvolution_results/bp.res_healthy_newman_01_01.rdata"))) #instaprism
@@ -117,7 +116,14 @@ rownames(clinical_2_discovery) <- clinical_2_discovery$LIMS_ID
 impute_df <-  read.csv(paste0(path_input,'/Raw_data/CIBERSORTx_Adjusted_CPM_LM22.txt'),sep='\t') %>% filter(P.value<0.05)
 rownames(impute_df) <- impute_df$Mixture
 impute_df$Mixture <- NULL
+
+###------BayesPrism------###
+load(paste0(path_input,"Data/deconvolution_results/bp.res_ptb_SCnewman_01_01.RData"))
+load(paste0(path_input,"Data/deconvolution_results/bp.res_healthy_SCnewman_01_01.RData"))
+load(paste0(path_input,"Data/deconvolution_results/bp.res_tbm_SCnewman_01_01.RData"))
 ```
+
+Split samples by low and high CNIH4 (refactor later)
 
 ```{r}
 vst_ptb_tbm <- rbind.fill(vst_data,tbm_vst)
@@ -153,12 +159,6 @@ dim(vst_data2) # 295 31427
 ## 2. Helper functions
 
 ```{r}
-
-library(ComplexHeatmap)
-library(circlize)
-
-
-
 posterior_predict_hurdle_gaussian <- function(i, prep, ...) {
   mu <- brms::get_dpar(prep, "mu", i = i)
   sigma <- brms::get_dpar(prep, "sigma", i = i)
@@ -283,8 +283,6 @@ IC_names<-c('CD200', 'CD2','CD58','TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF
              'ICOS', 'TNFRSF9', 'CTLA4', 'LAG3','LGALS9',
             'TMED9','TGFA','GLI1','CNIH4')
 
-
-
 ICvsCNIH4_df <- vst_data %>% select(IC_names)
 # ICvsCNIH4_df <- ICvsCNIH4_df[vapply(ICvsCNIH4_df, 
 #                                     function(x) length(unique(x)) > 1, 
@@ -344,10 +342,10 @@ genes<-c('CD200', 'CD2','CD58','TNFSF4', 'CD200R1', 'IDO1','TNFRSF18', 'TNFSF18'
             'TMED9','TGFA','GLI1','CNIH4')
 
 df <- vst_data %>% select(genes)
+cor_method = 'spearman'
 mat <- cor(df, use='pairwise.complete.obs',method = cor_method)
-mat[p.mat>0.05] = 0
 p.mat <- cor.pval.test(df, df, method=cor_method, use='pairwise.complete.obs')
-
+mat[p.mat>0.05] = 0
 
 col=c("#395b85", 'white', "#FF681E")
 col_fun = colorRamp2(seq(-1, 1, length = 3), col)
@@ -650,6 +648,268 @@ p <- ggplot(data=tmp,
 p
 ```
 
+### 3.5. Devolution Analysis (BayesPrism)
+
+#### 3.5.0. Prepared data for visualization
+
+```{r}
+# Get cell proportion for each patient
+celltypes <- colnames(ptb.theta)
+id26TB <- All_sample_RNAseq %>% subset(Study %in% c("26TB") & timepoint=='D0') %>% rownames()
+id27TB <- All_sample_RNAseq %>% subset(Study %in% c("27TB") & timepoint=='D0') %>% rownames()
+
+tbm26.theta <- tbm.theta[id26TB,]
+tbm27.theta <- tbm.theta[id27TB,]
+tbm26.z <- tbm.z[id26TB,,]
+tbm27.z <- tbm.z[id27TB,,]
+
+theta_long <- rbind(pivot_longer(healthy.theta,celltypes) %>% mutate(group = 'Healthy'),
+                    pivot_longer(ptb.theta,celltypes) %>% mutate(group = 'PTB'),
+                    pivot_longer(tbm27.theta,celltypes) %>% mutate(group = 'TBM (HIV-)'),
+                    pivot_longer(tbm26.theta,celltypes) %>% mutate(group = 'TBM (HIV+)'))
+
+WBC_df <- clinical_data_HC_CNS_IF_PTB_TBM[,c('LIMS_ID','WBC')]
+row.names(WBC_df) <- WBC_df$LIMS_ID
+healthy.thetacount <- healthy.theta*WBC_df[rownames(healthy.theta),]$WBC
+ptb.thetacount <- ptb.theta*WBC_df[rownames(ptb.theta),]$WBC
+tbm.thetacount <- tbm.theta*WBC_df[rownames(tbm.theta),]$WBC
+tbm26.thetacount <- tbm26.theta*WBC_df[rownames(tbm26.theta),]$WBC
+tbm27.thetacount <- tbm27.theta*WBC_df[rownames(tbm27.theta),]$WBC
+
+thetacount_long <- rbind(pivot_longer(healthy.thetacount,colnames(healthy.thetacount)) %>% mutate(group = 'Healthy'),
+                    pivot_longer(ptb.thetacount,colnames(ptb.thetacount)) %>% mutate(group = 'PTB'),
+                    pivot_longer(tbm27.thetacount,colnames(tbm27.thetacount)) %>% mutate(group = 'TBM (HIV-)'),
+                    pivot_longer(tbm26.thetacount,colnames(tbm26.thetacount)) %>% mutate(group = 'TBM (HIV+)'))
+
+ptb_vst.z <- list()
+healthy_vst.z <- list()
+tbm_vst.z <- list()
+tbm26_vst.z <- list()
+tbm27_vst.z <- list()
+
+for(c in celltypes) {
+  ptb_vst.z[[c]] = vst(round(t(ptb.z[,,c])), nsub=nrow(ptb.z[,,c]), blind=T, fitType='parametric')
+  healthy_vst.z[[c]] = vst(round(t(healthy.z[,,c])), nsub=nrow(healthy.z[,,c]), blind=T, fitType='parametric')
+  tbm_vst.z[[c]] = vst(round(t(tbm.z[,,c])), nsub=nrow(tbm.z[,,c]), blind=T, fitType='parametric')
+  tbm26_vst.z[[c]] = vst(round(t(tbm26.z[,,c])), nsub=nrow(tbm26.z[,,c]), blind=T, fitType='parametric')
+  tbm27_vst.z[[c]] = vst(round(t(tbm27.z[,,c])), nsub=nrow(tbm27.z[,,c]), blind=T, fitType='parametric')
+}
+
+ptb_vst.z <- simplify2array(ptb_vst.z)
+healthy_vst.z <- simplify2array(healthy_vst.z)
+tbm_vst.z <- simplify2array(tbm_vst.z)
+tbm26_vst.z <- simplify2array(tbm26_vst.z)
+tbm27_vst.z <- simplify2array(tbm27_vst.z)
+
+CNIH4.z_long <- rbind(pivot_longer(as.data.frame(healthy_vst.z['CNIH4',,]), celltypes) %>% mutate(group = 'Healthy'),
+                    pivot_longer(as.data.frame(ptb_vst.z['CNIH4',,]), celltypes) %>% mutate(group = 'PTB'),
+                    pivot_longer(as.data.frame(tbm27_vst.z['CNIH4',,]), celltypes) %>% mutate(group = 'TBM (HIV-)'),
+                    pivot_longer(as.data.frame(tbm26_vst.z['CNIH4',,]), celltypes) %>% mutate(group = 'TBM (HIV+)'))
+
+CD274.z_long <- rbind(pivot_longer(as.data.frame(healthy_vst.z['CD274',,]), celltypes) %>% mutate(group = 'Healthy'),
+                    pivot_longer(as.data.frame(ptb_vst.z['CD274',,]), celltypes) %>% mutate(group = 'PTB'),
+                    pivot_longer(as.data.frame(tbm27_vst.z['CD274',,]), celltypes) %>% mutate(group = 'TBM (HIV-)'),
+                    pivot_longer(as.data.frame(tbm26_vst.z['CD274',,]), celltypes) %>% mutate(group = 'TBM (HIV+)'))
+```
+
+#### 3.5.1. Cell types Proportions
+
+```{r}
+stat.test <- theta_long %>%
+  group_by(name) %>%
+  wilcox_test(value ~ group) %>%
+  add_significance("p") %>%
+  #filter(p.signif !="ns") %>%
+  add_y_position(step.increase = 0.06)
+
+p <- ggplot(data=theta_long,
+       aes(x = factor(group, level = c('Healthy','PTB','TBM (HIV-)','TBM (HIV+)')),
+           color=factor(group, level = c('Healthy','PTB','TBM (HIV-)', 'TBM (HIV+)')),
+           y=value,))+
+  facet_wrap(~factor(name, level=c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')), ncol = 6)+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),alpha=0.1)+
+  scale_color_manual(values=c("#A3BE8C","#81A1C1","#B48EAD","#D08770"))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('% Cell population')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_blank(),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"),
+        strip.text = element_text(face="bold",size=14)) +
+  stat_pvalue_manual(stat.test, 
+                     label = 'p.signif',
+                     tip.length = 0,vjust=0.2)
+
+#png(file=paste0(path_output,"/BayesPrism_CellPops.png"),res=900, units = 'in', width=17, height = 7)
+p
+#dev.off()
+```
+
+#### 3.5.2. Cell counts
+
+```{r}
+stat.test <- thetacount_long %>% 
+  group_by(name) %>%
+  wilcox_test(value ~ group) %>%
+  add_significance("p") %>%
+  #filter(p.signif !="ns") %>%
+  add_y_position(step.increase = 0.2)
+
+p <- ggplot(data=thetacount_long,
+       aes(x = factor(group, level = c('Healthy','PTB','TBM (HIV-)','TBM (HIV+)')),
+           color=factor(group, level = c('Healthy','PTB','TBM (HIV-)','TBM (HIV+)')),
+           y=value,))+
+  facet_wrap(~factor(name, 
+                     level=c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')), scale='free', 
+             ncol = 6)+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),alpha=0.1)+
+  scale_color_manual(values=c("#A3BE8C","#81A1C1","#B48EAD","#D08770"))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  scale_y_continuous(trans='log10')+
+  #ylab('Log10 cell count')+
+  # stat_pvalue_manual(stat.test,
+  #                    label = 'p.signif',
+  #                    tip.length = 0,vjust=0.5)+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_blank(),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"),
+        strip.text = element_text(face="bold",size=14))
+
+
+#png(file=paste0(path_output,"/BayesPrism_CellCounts.png"),res=900, units = 'in', width=17, height = 7)
+p
+#dev.off()
+```
+
+#### 3.5.3. CNIH4 estimation
+
+```{r}
+stat.test <- CNIH4.z_long %>% 
+  group_by(name) %>%
+  wilcox_test(value ~ group) %>%
+  add_significance("p") %>%
+  #filter(p.signif !="ns") %>%
+  add_y_position(step.increase = 0.04)
+
+p <- ggplot(data=CNIH4.z_long,
+       aes(x = factor(group, level = c('Healthy',
+                                         'PTB',
+                                         'TBM (HIV-)',
+                                         'TBM (HIV+)')),
+           y=value,
+           color=factor(group, level = c('Healthy',
+                                         'PTB',
+                                         'TBM (HIV-)',
+                                         'TBM (HIV+)'
+                                         ))))+
+  facet_wrap(~factor(name, level=c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')), 
+             ncol = 6)+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),
+             alpha=0.1)+
+  scale_color_manual(values=c("#A3BE8C",
+                              "#81A1C1",
+                              "#B48EAD",
+                              "#D08770"
+                              ))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('CNIH4 estimation')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_blank(),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"),
+        strip.text = element_text(face="bold",size=14)) +
+  stat_pvalue_manual(stat.test, 
+                     label = 'p.signif',
+                     tip.length = 0,vjust=1)
+
+#png(file=paste0(path_output,"/BayesPrism_zCNIH4.png"),res=900, units = 'in', width=17, height = 7)
+p
+#dev.off()
+```
+
+#### 3.5.4. CD274/PD-L1 Estimation
+
+```{r}
+stat.test <- CD274.z_long %>% 
+  group_by(name) %>%
+  wilcox_test(value ~ group) %>%
+  add_significance("p") %>%
+  #filter(p.signif !="ns") %>%
+  add_y_position(step.increase = 0.04)
+
+p <- ggplot(data=CD274.z_long,
+       aes(x = factor(group, level = c('Healthy',
+                                         'PTB',
+                                         'TBM (HIV-)',
+                                         'TBM (HIV+)')),
+           y=value,
+           color=factor(group, level = c('Healthy',
+                                         'PTB',
+                                         'TBM (HIV-)',
+                                         'TBM (HIV+)'
+                                         ))))+
+  facet_wrap(~factor(name, level=c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')), 
+             ncol = 6)+
+  geom_boxplot() +
+  geom_point(position=position_jitterdodge(jitter.width =0.3),
+             alpha=0.1)+
+  scale_color_manual(values=c("#A3BE8C",
+                              "#81A1C1",
+                              "#B48EAD",
+                              "#D08770"
+                              ))+
+  labs(color='Group')+ 
+  xlab('Cell type')+
+  ylab('CD274 estimation')+
+  theme_bw()+
+  theme(plot.title = element_text(size = 25),
+        legend.position = "right",
+        legend.text = element_text(size = 20) ,
+        legend.title  = element_text(size = 20,color="black",face="bold"),
+        axis.text = element_text(size = 25),
+        axis.text.x=element_blank(),
+        axis.title.x = element_text(size = 20,color="black",face="bold"),
+        axis.text.y=element_text(color="black",size=20),
+        axis.title.y = element_text(size = 20,color="black",face="bold"),
+        axis.title= element_text(size = 40,color="black",face="bold"),
+        strip.text = element_text(face="bold",size=14)) +
+  stat_pvalue_manual(stat.test, 
+                     label = 'p.signif',
+                     tip.length = 0,vjust=1)
+
+#png(file=paste0(path_output,"/BayesPrism_zCNIH4.png"),res=900, units = 'in', width=17, height = 7)
+p
+#dev.off()
+```
+
 ### 3.5. Deconvolution Analysis using BayesPrism
 
 ```{r}
@@ -680,8 +940,6 @@ tmp5 <- vsd_adj_study[,c1]%>% as.data.frame()
 tmp6 <- vsd_adj_study[,c2]%>% as.data.frame()
 to_vec(for(i in 1:5) sqrt(sum((tmp5[,c1[i]]-tmp6[,c2[i]])^2)))
 
-
-
 #
 to_vec(for(i in 1:5) sqrt(sum((tmp1[,c1[i]]-tmp3[,c1[i]])^2)))
 to_vec(for(i in 1:5) sqrt(sum((tmp1[,c1[i]]-tmp5[,c1[i]])^2)))
@@ -695,12 +953,12 @@ to_vec(for(i in 1:5) sqrt(sum((tmp4[,c2[i]]-tmp6[,c2[i]])^2)))
 #### 3.5.0. Extract data from BayesPrism results
 
 ```{r}
-library(InstaPrism)
 
 get_theta <- function(bp) {
   theta <- get.fraction (bp=bp,
             which.theta="final",
             state.or.type="type")
+  
   theta <- as.data.frame(theta)
   row.names(theta) <- gsub("X", "", row.names(theta))
   row.names(theta) <- gsub("_PBMC", "", row.names(theta))
@@ -769,6 +1027,7 @@ for (c in colnames(z_healthy[1,,])) {
                     blind=T,
                     nsub=dim(z_healthy[,,c])[1],
                     fitType='parametric') %>% t()
+  
   z_ptb[,,c] <-vst(round(t(z_ptb[,,c])),
                   blind=T,
                   nsub=dim(z_ptb[,,c])[1],
@@ -834,8 +1093,8 @@ p <- ggplot(data=theta_long,
         axis.text.y=element_text(color="black",size=20),
         axis.title.y = element_text(size = 20,color="black",face="bold"),
         axis.title= element_text(size = 40,color="black",face="bold"),
-        strip.text = element_text(face="bold",size=14)) +
-  stat_pvalue_manual(stat.test, 
+        strip.text = element_text(face="bold",size=14))+ 
+  stat_pvalue_manual(stat.test,
                      label = 'p.signif',
                      tip.length = 0,vjust=0.2)
 
@@ -1284,7 +1543,6 @@ theta <- theta_healthy #input theta_ptb, theta_tbm, theta_healthy
 theta1 <- theta[row.names(gt),]
 theta1 <- na.omit(theta1)
 gt1 <- gt[row.names(theta1),]
-
 
 cell_list = c('Lymphocyte','Monocyte',"Neutrophil")
 p <- list()
