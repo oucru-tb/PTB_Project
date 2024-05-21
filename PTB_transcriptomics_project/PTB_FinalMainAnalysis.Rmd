@@ -54,6 +54,7 @@ library(ComplexHeatmap)
 library(circlize)
 library(rstatix)
 library(ggpubr)
+
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
 path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
@@ -1952,6 +1953,148 @@ fit_glm <- glm(phenotype ~ CNIH4 , data = data_combine, family=binomial)
 prob1 = predict(fit_glm, type='response', data_combine)
 pred1 = prediction(prob1, data_combine$phenotype)
 performance(pred1,"auc")@y.values[[1]][1]
+```
+
+### 3.13. Mediation Analysis
+
+#### 3.13.1. Mtb load --\> AIM2 --\> STAT1
+
+```{r}
+library(CMAverse)
+library(ReactomeContentService4R) # Extract data from the three pathways
+library(GSVA)
+
+set.seed(1)
+
+tmp <- vst_data %>% select(any_of(c('AIM2','CNIH4','STAT1')))
+tmp$log2_CT <- log2(vst_data$CT_mean)
+
+res_gformula <- cmest(data = tmp, model = "gformula", 
+                      exposure = "log2_CT",mediator = "AIM2", outcome = "STAT1",
+                      #basec =  c("Age"), 
+                      EMint = FALSE,
+                      mreg = list("linear"), yreg = "linear",multimp = TRUE,
+                      astar = 0, a = 1, mval = list(1), 
+                      estimation = "imputation", inference = "bootstrap", nboot = 3000)
+
+summary(res_gformula)$summarydf
+
+mediated_res<-summary(res_gformula)$summarydf[c("tnde","tnie","te","pm"),] 
+mediated_res$Effect<-rownames(mediated_res)
+
+mediated_res %<>%  mutate(Effect=case_when(Effect=="tnde"~"Natural direct impact",
+                                           Effect=="tnie"~"Natural indirect impact",
+                                           Effect=="te"~"Total impact",
+                                           .default ="Proportion Mediated")) %>% 
+                    mutate(Effect=factor(Effect,
+                                         levels=c("Natural direct impact",
+                                                  "Natural indirect impact",
+                                                  "Total impact",
+                                                  "Proportion Mediated")))
+mediated_res
+```
+
+```{r}
+library(CMAverse)
+library(ReactomeContentService4R) # Extract data from the three pathways
+library(GSVA)
+
+IFN_alpha_beta<-event2Ids(event.id = "R-HSA-909733.9")
+IFN_gamma<-event2Ids(event.id = "R-HSA-877300.7")
+
+#PD-L1 expression and PD-1 checkpoint pathway in cancer - Homo sapiens (human) hsa05235
+PD_L1<-get_genelist_pathway_kegg(hsa_ID = "hsa05235") 
+#T cell receptor signaling pathway - Homo sapiens (human)
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660") 
+
+tmp <- vst_data %>% select(any_of(c(TCR_signaling, 'CNIH4','STAT1')))
+GSVA_targeted <- gsva(t(tmp), gset.idx.list=TCR_signaling,method="ssgsea",mx.diff=T,BPPARAM=MulticoreParam(12))
+
+set.seed(1)
+res_gformula <- cmest(data = tmp,
+                      model = "gformula", 
+                      outcome = colnames(tmp)[1:117],
+                      exposure = "STAT1",
+                      mediator = "CNIH4",
+                      #basec =  c("Age"), 
+                      EMint = FALSE,
+                      mreg = list("linear"), yreg = "linear",multimp = TRUE,
+                      astar = 0, a = 1, mval = list(1),
+                      estimation = "imputation", inference = "bootstrap", nboot = 3000)
+```
+
+#### 3.13.2. STAT1 --\> (CNIH4, CD274) --\> T-cell receptor signaling pathways
+
+```{r}
+library(GSVA)
+library(ReactomeContentService4R)
+
+IFN_alpha_beta<-event2Ids(event.id = "R-HSA-909733.9")
+IFN_gamma<-event2Ids(event.id = "R-HSA-877300.7")
+PD_L1<-get_genelist_pathway_kegg(hsa_ID = "hsa05235") 
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660")
+targeted_pathways<-list(IFN_alpha_beta=IFN_alpha_beta$geneSymbol,
+                        IFN_gamma=IFN_gamma$geneSymbol,
+                        PD_L1=PD_L1,
+                        TCR_signaling=TCR_signaling)
+
+tmp <- vst_data %>% select(any_of(c(TCR_signaling,
+                                    IFN_alpha_beta$geneSymbol,
+                                    IFN_gamma$geneSymbol,
+                                    PD_L1))) %>% na.omit()
+
+GSVA_targeted <- gsva(t(tmp), gset.idx.list = targeted_pathways, method="ssgsea", mx.diff=T) %>% t()
+tmp <- merge(vst_data[,c('Age','STAT1','CNIH4','CD274')],GSVA_targeted,by='row.names')
+rownames(tmp) <- tmp$Row.names
+tmp$Row.names<-NULL
+
+set.seed(1)
+res_gformula <- cmest(data = tmp,
+                      model = "gformula", 
+                      outcome = 'TCR_signaling',
+                      exposure = "STAT1",
+                      mediator = c("CNIH4",'CD274'),
+                      basec =  c("Age"), 
+                      EMint = FALSE,
+                      mreg = list("linear","linear"), yreg = "linear",multimp = TRUE,
+                      astar = 0, a = 1, mval = list(1,2),
+                      estimation = "imputation", inference = "bootstrap", nboot = 3000)
+
+mediated_res<-summary(res_gformula)$summarydf[c("tnde","tnie","te","pm"),] 
+mediated_res$Effect<-rownames(mediated_res)
+
+mediated_res %<>%  mutate(Effect=case_when(Effect=="tnde"~"Natural direct impact",
+                                           Effect=="tnie"~"Natural indirect impact",
+                                           Effect=="te"~"Total impact",
+                                           .default ="Proportion Mediated")) %>% 
+                    mutate(Effect=factor(Effect,
+                                         levels=c("Natural direct impact",
+                                                  "Natural indirect impact",
+                                                  "Total impact",
+                                                  "Proportion Mediated")))
+mediated_res
+```
+
+```{r}
+# Extract data from the three pathways: 
+library(ReactomeContentService4R)
+library(GSVA)
+
+IFN_alpha_beta<-event2Ids(event.id = "R-HSA-909733.9")
+IFN_gamma<-event2Ids(event.id = "R-HSA-877300.7")
+
+#PD-L1 expression and PD-1 checkpoint pathway in cancer - Homo sapiens (human) hsa05235
+PD_L1<-get_genelist_pathway_kegg(hsa_ID = "hsa05235") 
+#T cell receptor signaling pathway - Homo sapiens (human)
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660")
+targeted_pathways<-list(IFN_alpha_beta=IFN_alpha_beta$geneSymbol,IFN_gamma=IFN_gamma$geneSymbol,PD_L1=PD_L1,TCR_signaling=TCR_signaling)
+
+## Compute ssGSEA of these pathways
+
+GSVA_targeted <- gsva(t(vst_data), gset.idx.list=targeted_pathways,method="ssgsea",mx.diff=T,BPPARAM=MulticoreParam(12))
+GSVA_targeted<-as.data.frame(t(GSVA_targeted))
+GSVA_targetedcombined<-merge(clinical_RNA,GSVA_targeted,by='row.names')
+GSVA_targetedcombined %<>% dplyr::select(Row.names,"Age","log2_Lymphocyte_counts","log2_Neutrophil_counts","log2_CT","CNIH4","IFNG","CD274",colnames(GSVA_targeted))
 ```
 
 # 4. Draft analysis

@@ -1,0 +1,996 @@
+---
+title: "MainBayesPrism"
+author: "Triet Thai"
+date: "2024-03-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+```{r}
+suppressWarnings(library(BayesPrism))
+keep_data= TRUE #dont remove pre
+```
+
+# Import Monaco and Newman data (Run either of these data set for experiment )
+
+## 1. Bulk Monaco, Ref SC Monaco
+
+```{r}
+monaco_celltypes <- read.csv('R:/Data Analysis Team/DeconvolutionAnalysis/Newmandata/monaco_celltypes.txt',sep='\t')$Celltype
+sc.dat <- read.csv('R:/Data Analysis Team/DeconvolutionAnalysis/Newmandata/monaco_scRNAseq.txt',sep='\t')
+sc.dat <- as.data.frame(t(sc.dat))
+
+bk.dat <- read.csv('R:/Data Analysis Team/DeconvolutionAnalysis/Newmandata/monaco_bulk_data.txt',sep='\t')
+row.names(bk.dat) <- bk.dat$X
+bk.dat$X <-NULL
+bk.dat <- as.data.frame(t(bk.dat))
+gt <- read.csv("monaco_pbmcs/monaco_true_props.csv")
+rownames(gt) <- gt$Sample.Name
+gt$Sample.Name <- NULL
+gt <- gt[ order(row.names(gt)), ]
+gt$Monocyte <- gt$Monocytes
+gt$Neutrophil <- gt$Other
+```
+
+## 2. Bulk Newman, Ref SC Newman
+
+```{r}
+newman_celltypes <- read.csv('W:/#oucru-tb/BayesPrism/Newmandata/newman_celltypes.txt',sep='\t')$Celltype
+celltypes <- newman_celltypes
+sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/Newmandata/newman_SCdata.tsv',sep='\t')
+
+bk.dat <- read.csv('W:/#oucru-tb/BayesPrism/Newmandata/newman_bulk_data.txt',sep='\t')
+row.names(bk.dat) <- bk.dat$X
+bk.dat$X <-NULL
+bk.dat <- as.data.frame(t(bk.dat))
+gt <- read.csv("Newmandata/newman_true_props.csv")
+rownames(gt) <- gt$samples
+gt$samples <- NULL
+gt <- gt[ order(row.names(gt)), ]
+gt$Monocyte <- gt$Monocytes
+gt$Neutrophil <- gt$Neutrophils
+```
+
+## 3. Bulk Monaco, Ref SC Newman
+
+```{r}
+newman_celltypes <- read.csv('W:/#oucru-tb/BayesPrism/Newmandata/newman_celltypes.txt',sep='\t')$Celltype
+celltypes <- newman_celltypes
+sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/Newmandata/newman_SCdata.tsv',sep='\t')
+
+bk.dat <- read.csv('R:/Data Analysis Team/DeconvolutionAnalysis/Newmandata/monaco_bulk_data.txt',sep='\t')
+row.names(bk.dat) <- bk.dat$X
+bk.dat$X <-NULL
+bk.dat <- as.data.frame(t(bk.dat)) #12 10661 : samples  vs genes
+gt <- read.csv("monaco_pbmcs/monaco_true_props.csv")
+rownames(gt) <- gt$Sample.Name
+gt$Sample.Name <- NULL
+gt <- gt[ order(row.names(gt)), ]
+gt$Monocyte <- gt$Monocytes
+gt$Neutrophil <- gt$Other
+```
+
+## 4. Bulk Newman, Ref SC Monaco
+
+```{r}
+monaco_celltypes <- read.csv('R:/Data Analysis Team/DeconvolutionAnalysis/Newmandata/monaco_celltypes.txt',sep='\t')$Celltype
+celltypes <- monaco_celltypes
+sc.dat <- read.csv('R:/Data Analysis Team/DeconvolutionAnalysis/Newmandata/monaco_scRNAseq.txt',sep='\t')
+sc.dat <- as.data.frame(t(sc.dat))
+
+bk.dat <- read.csv('W:/#oucru-tb/BayesPrism/Newmandata/newman_bulk_data.txt',sep='\t')
+row.names(bk.dat) <- bk.dat$X
+bk.dat$X <-NULL
+bk.dat <- as.data.frame(t(bk.dat))
+gt <- read.csv("Newmandata/newman_true_props.csv")
+rownames(gt) <- gt$samples
+gt$samples <- NULL
+gt <- gt[ order(row.names(gt)), ]
+gt$Monocyte <- gt$Monocytes
+gt$Neutrophil <- gt$Neutrophils
+```
+
+## 5.1 Bulk PTB, ref Newman
+
+```{r}
+library(dplyr)
+
+set.seed(42)
+newman_celltypes <- read.csv('W:/#oucru-tb/BayesPrism/Newmandata/newman_celltypes.txt',sep='\t')$Celltype
+celltypes <- newman_celltypes
+sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/Newmandata/newman_SCdata.tsv',sep='\t')
+
+# monaco_celltypes <- read.csv('R:/Data Analysis Team/DeconvolutionAnalysis/Newmandata/monaco_celltypes.txt',sep='\t')$Celltype
+# celltypes <- monaco_celltypes
+# sc.dat <- read.csv('R:/Data Analysis Team/DeconvolutionAnalysis/Newmandata/monaco_scRNAseq.txt',sep='\t')
+# sc.dat <- as.data.frame(t(sc.dat))
+
+load("Data_RNAseq_RUN1andRUN2_15Feb2023.RData")
+load("vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
+load("Most_variance_RNA_genes.Rdata")
+load('clinical_data_HC_CNS_IF_PTB_TBM.RData')
+
+ptb_id <- Cli_All %>% filter(trial_number=='MDR_PTB'|trial_number=='DS_PTB') %>% select('LIMS_ID')
+bk.dat <- merge(count_all,anno[,c('gene_symbol','gene_id')],by=0)
+bk.dat <- bk.dat[!duplicated(bk.dat$gene_symbol),]
+rownames(bk.dat) <- bk.dat$gene_symbol
+bk.dat <- as.data.frame(t(bk.dat[,ptb_id$LIMS_ID]))
+
+gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
+           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE
+           )
+gt <- na.omit(gt)
+rownames(gt) <- gt$LIMS_ID
+gt$LIMS_ID <- NULL
+
+#old
+# gt <- clinical_2 %>% select(c("LIMS_ID",'Neutrophil','Lymphocyte','Monocyte','Eosinophil'))
+# gt <- na.omit(gt)
+# rownames(gt) <- gt$LIMS_ID
+# gt$LIMS_ID <- NULL
+
+# gt <- gt[sample(nrow(gt), 20), ] #20 PTB patients with groundtruth
+# gt <- gt[ order(row.names(gt)), ]
+# bk.dat <- bk.dat[row.names(gt), ]
+
+```
+
+## 5.2 Bulk PTB, ref OurSC
+
+```{r}
+library(dplyr)
+set.seed(42)
+
+if(!keep_data){rm(list=ls())}
+
+# our_celltypes <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/Celltypes.txt',sep='\t',encoding= "utf-8")$Celltype
+# celltypes <- our_celltypes
+# sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/SCTrawCountScRNAseq10x.tsv',sep='\t')
+# sc.dat <- as.data.frame(t(sc.dat))
+
+our_celltypes <- read.csv('data/ourSC/healthy/Metadata.txt',sep='\t',encoding= "utf-8")$Celltype
+celltypes <- our_celltypes
+#sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy/CombiedRawCount.txt',sep='\t')
+sc.dat <- read.csv('data/ourSC/healthy/CombiedSCTCount.txt',sep='\t')
+sc.dat <- as.data.frame(t(sc.dat))
+
+# our_celltypes <- read.csv('W:/#oucru-tb/BayesPrism/data/ourSC/healthy_new/Metadata_Neuman.txt',sep='\t',encoding= "utf-8")$Celltype
+# celltypes <- our_celltypes
+# sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/data/ourSC/healthy_new/CombiedRawCountNeuman.txt',sep='\t')
+# sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy_new/CombiedSCTCountNeuman.txt',sep='\t')
+# sc.dat <- as.data.frame(t(sc.dat))
+
+# our_celltypes <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy_subset/Metadata_Subsetted.txt',sep='\t',encoding= "utf-8")$Celltype
+# celltypes <- our_celltypes
+# sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy_subset/CombiedRawCountSubsetted.txt',sep='\t')
+# sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy_subset/CombiedSCTCountSubsetted.txt',sep='\t')
+# sc.dat <- as.data.frame(t(sc.dat))
+
+# our_celltypes <- read.csv('data/ourSC/healthy22April/Metadata22Apr.txt',sep='\t',encoding= "utf-8")$Celltype
+# celltypes <- our_celltypes
+# sc.dat <- read.csv('data/ourSC/healthy22April/RawCount22Apr.txt',sep='\t')
+# sc.dat <- read.csv('data/ourSC/healthy22April/SCTCount22Apr.txt',sep='\t')
+# sc.dat <- as.data.frame(t(sc.dat))
+
+# our_celltypes <- read.csv('data/ourSC/healthy22Apr_v2/Metadata22AprVer2.txt',sep='\t',encoding= "utf-8")$Celltype
+# celltypes <- our_celltypes
+# sc.dat <- read.csv('data/ourSC/healthy22Apr_v2/RawCount22Aprver2.txt',sep='\t')
+# #sc.dat <- read.csv('data/ourSC/healthy22Apr_v2/SCTCount22AprVer2.txt',sep='\t')
+# sc.dat <- as.data.frame(t(sc.dat))
+
+load("data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData") #bulk
+#load("vst_Gensymbol_allPTB_295Sample_18Feb22.RData") #groundtruth
+load("data/Most_variance_RNA_genes.Rdata")
+load('data/clinical_data_HC_CNS_IF_PTB_TBM.RData') #groundtruth
+
+ptb_id <- Cli_All %>% filter(trial_number=='MDR_PTB'|trial_number=='DS_PTB') %>% select('LIMS_ID')
+bk.dat <- merge(count_all,anno[,c('gene_symbol','gene_id')],by=0)
+bk.dat <- bk.dat[!duplicated(bk.dat$gene_symbol),]
+rownames(bk.dat) <- bk.dat$gene_symbol
+bk.dat <- as.data.frame(t(bk.dat[,ptb_id$LIMS_ID]))
+
+gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
+           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE
+           )
+gt <- na.omit(gt)
+rownames(gt) <- gt$LIMS_ID
+gt$LIMS_ID <- NULL
+```
+
+## 6.1. Bulk TBM, ref Newman
+
+```{r}
+library(dplyr)
+
+set.seed(42)
+newman_celltypes <- read.csv('data/Newmandata/newman_celltypes.txt',sep='\t')$Celltype
+celltypes <- newman_celltypes
+sc.dat <- read.csv('data/Newmandata/newman_SCdata.tsv',sep='\t')
+
+# monaco_celltypes <- read.csv('R:/Data Analysis Team/DeconvolutionAnalysis/Newmandata/monaco_celltypes.txt',sep='\t')$Celltype
+# celltypes <- monaco_celltypes
+# sc.dat <- read.csv('R:/Data Analysis Team/DeconvolutionAnalysis/Newmandata/monaco_scRNAseq.txt',sep='\t')
+# sc.dat <- as.data.frame(t(sc.dat))
+
+load("data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData")
+#load("vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
+load("data/Most_variance_RNA_genes.Rdata")
+load('data/clinical_data_HC_CNS_IF_PTB_TBM.RData')
+
+tbm_id <- Cli_All %>% filter(Timepoint=='D0' & (trial_number=='26TB'|trial_number=='27TB')) %>% select('LIMS_ID')
+bk.dat <- merge(count_all,anno[,c('gene_symbol','gene_id')],by=0)
+bk.dat <- bk.dat[!duplicated(bk.dat$gene_symbol),]
+rownames(bk.dat) <- bk.dat$gene_symbol
+bk.dat <- as.data.frame(t(bk.dat[,tbm_id$LIMS_ID]))
+
+gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
+           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE
+           )
+gt <- na.omit(gt)
+rownames(gt) <- gt$LIMS_ID
+gt$LIMS_ID <- NULL
+```
+
+## 6.2. Bulk TBM, ref OurSC
+
+```{r}
+library(dplyr)
+set.seed(42)
+
+our_celltypes <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy/Metadata.txt',sep='\t',encoding= "utf-8")$Celltype
+celltypes <- our_celltypes
+sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy/CombiedRawCount.txt',sep='\t')
+sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy/CombiedSCTCount.txt',sep='\t')
+sc.dat <- as.data.frame(t(sc.dat))
+
+load("Data_RNAseq_RUN1andRUN2_15Feb2023.RData")
+load("vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
+load("Most_variance_RNA_genes.Rdata")
+load('clinical_data_HC_CNS_IF_PTB_TBM.RData')
+
+tbm_id <- Cli_All %>% filter(Timepoint=='D0' & (trial_number=='26TB'|trial_number=='27TB')) %>% select('LIMS_ID')
+bk.dat <- merge(count_all,anno[,c('gene_symbol','gene_id')],by=0)
+bk.dat <- bk.dat[!duplicated(bk.dat$gene_symbol),]
+rownames(bk.dat) <- bk.dat$gene_symbol
+bk.dat <- as.data.frame(t(bk.dat[,tbm_id$LIMS_ID]))
+
+gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
+           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE
+           )
+gt <- na.omit(gt)
+rownames(gt) <- gt$LIMS_ID
+gt$LIMS_ID <- NULL
+```
+
+## 7.1. Bulk Healthy, ref Newman
+
+```{r}
+library(dplyr)
+
+set.seed(42)
+newman_celltypes <- read.csv('data/Newmandata/newman_celltypes.txt',sep='\t')$Celltype
+celltypes <- newman_celltypes
+sc.dat <- read.csv('data/Newmandata/newman_SCdata.tsv',sep='\t')
+
+load("data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData")
+#load("vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
+load("data/Most_variance_RNA_genes.Rdata")
+load('data/clinical_data_HC_CNS_IF_PTB_TBM.RData')
+
+h_id <- Cli_All %>% filter(Timepoint=='D0' & (trial_number=='43TB'|trial_number=='HV')) %>% select('LIMS_ID')
+bk.dat <- merge(count_all,anno[,c('gene_symbol','gene_id')],by=0)
+bk.dat <- bk.dat[!duplicated(bk.dat$gene_symbol),]
+rownames(bk.dat) <- bk.dat$gene_symbol
+bk.dat <- as.data.frame(t(bk.dat[,h_id$LIMS_ID]))
+
+gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
+           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE
+           )
+gt <- na.omit(gt)
+rownames(gt) <- gt$LIMS_ID
+gt$LIMS_ID <- NULL
+```
+
+## 7.2. Bulk Healthy, ref OurSC
+
+```{r}
+library(dplyr)
+set.seed(42)
+
+our_celltypes <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy/Metadata.txt',sep='\t',encoding= "utf-8")$Celltype
+celltypes <- our_celltypes
+sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy/CombiedRawCount.txt',sep='\t')
+sc.dat <- read.csv('W:/#oucru-tb/BayesPrism/ourSC/healthy/CombiedSCTCount.txt',sep='\t')
+sc.dat <- as.data.frame(t(sc.dat))
+
+load("Data_RNAseq_RUN1andRUN2_15Feb2023.RData")
+load("vst_Gensymbol_allPTB_295Sample_18Feb22.RData")
+load("Most_variance_RNA_genes.Rdata")
+load('clinical_data_HC_CNS_IF_PTB_TBM.RData')
+
+h_id <- Cli_All %>% filter(Timepoint=='D0' & (trial_number=='43TB'|trial_number=='HV')) %>% select('LIMS_ID')
+bk.dat <- merge(count_all,anno[,c('gene_symbol','gene_id')],by=0)
+bk.dat <- bk.dat[!duplicated(bk.dat$gene_symbol),]
+rownames(bk.dat) <- bk.dat$gene_symbol
+bk.dat <- as.data.frame(t(bk.dat[,h_id$LIMS_ID]))
+
+gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
+           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE
+           )
+gt <- na.omit(gt)
+rownames(gt) <- gt$LIMS_ID
+gt$LIMS_ID <- NULL
+```
+
+# Check dimension
+
+```{r}
+length(celltypes)
+table(celltypes)
+```
+
+```{r}
+dim(bk.dat)
+head(rownames(bk.dat))
+head(colnames(bk.dat))
+```
+
+```{r}
+dim(sc.dat)
+head(rownames(sc.dat))
+head(colnames(sc.dat))
+```
+
+# QC of cell type and state labels
+
+```{r}
+plot.cor.phi(input=sc.dat,
+                         input.labels=celltypes,
+                         title="cell state correlation",
+                         #specify pdf.prefix if need to output to pdf
+                         #pdf.prefix="gbm.cor.cs",
+                         cexRow=0.2, cexCol=0.2,
+                         margins=c(2,2))
+gc()
+```
+
+```{r}
+sc.stat <- plot.scRNA.outlier(
+  input=sc.dat, #make sure the colnames are gene symbol or ENSMEBL ID
+  cell.type.labels=celltypes,
+  species="hs", #currently only human(hs) and mouse(mm) annotations are supported
+  return.raw=TRUE #return the data used for plotting.
+  #pdf.prefix="gbm.sc.stat" specify pdf.prefix if need to output to pdf
+)
+gc()
+head(sc.stat)
+```
+
+```{r}
+bk.stat <- plot.bulk.outlier(
+  bulk.input=bk.dat,#make sure the colnames are gene symbol or ENSMEBL ID
+    sc.input=sc.dat, #make sure the colnames are gene symbol or ENSMEBL ID
+  cell.type.labels=celltypes,
+  species="hs", #currently only human(hs) and mouse(mm) annotations are supported
+  return.raw=TRUE,
+  #pdf.prefix="gbm.bk.stat"# specify pdf.prefix if need to output to pdf
+)
+gc()
+head(bk.stat)
+```
+
+```{r}
+sc.dat.filtered <- cleanup.genes (input=sc.dat,
+                                  input.type="count.matrix",
+                                    species="hs",
+                                    gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
+                                    exp.cells=5)
+gc()
+```
+
+```{r}
+#note this function only works for human data. For other species, you are advised to make plots by yourself.
+plot.bulk.vs.sc(sc.input = sc.dat.filtered,
+                bulk.input = bk.dat
+                #pdf.prefix="gbm.bk.vs.sc" specify pdf.prefix if need to output to pdf
+)
+gc()
+```
+
+```{r}
+sc.dat.filtered.pc <-  select.gene.type(sc.dat.filtered,
+                                        gene.type = "protein_coding")
+gc(verbose = FALSE)
+```
+
+```{r}
+# Select marker genes (Optional)
+# performing pair-wise t test for cell states from different cell types
+
+diff.exp.stat <- get.exp.stat(sc.dat=sc.dat[,colSums(sc.dat>0)>3],# filter genes to reduce memory use
+                              cell.type.labels=celltypes,
+                              cell.state.labels=celltypes,
+                              #psuedo.count=0.1, #a numeric value used for log2 transformation. =0.1 for 10x data, =10 for smart-seq. Default=0.1.
+                              cell.count.cutoff=50, # a numeric value to exclude cell state with number of cells fewer than this value for t test. Default=50.
+                              n.cores=7 #number of threads
+                              )
+gc(verbose = FALSE)
+
+```
+
+```{r}
+sc.dat.filtered.pc.sig <- select.marker(sc.dat=sc.dat.filtered.pc,
+                                        stat=diff.exp.stat,
+                                        pval.max=0.1,
+                                        lfc.min=0.1)
+
+sc.dat.filtered.pc.sig$CD274 <- sc.dat.filtered.pc$CD274
+dim(sc.dat.filtered.pc.sig)
+```
+
+# Construct a prism object.
+
+```{r}
+myPrism <- new.prism(
+  reference=sc.dat.filtered.pc.sig, 
+  mixture=bk.dat,
+  input.type="count.matrix", 
+  cell.type.labels = celltypes, 
+  cell.state.labels = celltypes,
+  key=NULL,
+  outlier.cut=0.01,
+  outlier.fraction=0.1,
+)
+```
+
+# Run BayesPrism
+
+```{r}
+
+#bp.res <- run.prism(prism = myPrism, n.cores=32)
+
+library(InstaPrism)
+# 1. get initial deconvolution results using scRNA based reference
+InstaPrism.res.initial = InstaPrism(input_type = 'prism',prismObj = myPrism, n.iter = 100, n.core = 36)
+
+# 2. reconstruct cell.type specific expression with the initial reference (optional)
+#Z_ct_initial = get_Z_array(InstaPrism.res.initial,resolution = 'ct',n.core = 32)
+
+# 3. update reference & get deconovlution results from the updated reference
+updated_obj = InstaPrism_update(InstaPrism.res.initial, 
+                                bulk_Expr = t(myPrism@mixture), 
+                                n.iter = 100, 
+                                n.core = 36, 
+                                cell.types.to.update = 'all', 
+                                )
+
+# 4. reconstruct cell.type specific expression with the updated reference (optional)
+#Z_ct_updated = get_Z_array(updated_obj, resolution = 'ct', n.core = 32)
+
+bp.res <- updated_obj
+
+save(bp.res, file="results/bp.res_tbm_newman_01_01.rdata")
+
+
+
+```
+
+# Extract results
+
+```{r}
+# extract posterior mean of cell type fraction theta
+
+# theta <- get.fraction (bp=bp.res,
+#             which.theta="final",
+#             state.or.type="type")
+# theta <- as.data.frame(theta)
+
+theta <- as.data.frame(t(updated_obj@theta))
+row.names(theta) <- gsub("X", "", row.names(theta))
+row.names(theta) <- gsub("_PBMC", "", row.names(theta))
+theta <- theta[ order(row.names(theta)), ]
+if("Lymphocyte" %in% colnames(gt)) {
+  theta$Lymphocyte <- theta$B + theta$CD4T + theta$CD8T + theta$NK
+  
+  #theta$Lymphocyte <- theta$B + theta$CD4_T + theta$CD8_T + theta$NK + theta$MAIT
+  #theta$Neutrophil <- theta$Neutro
+  #theta$Monocyte <- theta$Mono_CD14 + theta$Mono_CD16
+  #theta$Monocyte <- theta$Mono
+}
+
+theta1 <- theta[row.names(gt),]
+theta1 <- na.omit(theta1)
+dim(theta1)
+gt1 <- gt[row.names(theta1),]
+#row.names(theta1) == row.names(gt1)
+```
+
+```{r}
+# extract coefficient of variation (CV) of cell type fraction
+theta.cv <- data.frame(bp.res@posterior.theta_f@theta.cv)
+theta.cv
+```
+
+```{r}
+# extract posterior mean of cell type-specific gene expression count matrix Z  
+z <- get.exp(bp=bp.res,
+             state.or.type="type",
+             cell.name = "Neutrophil")
+head(t(z[1:5,]))
+
+tmp = as.data.frame(z)
+```
+
+```{r}
+#save(bp.res, file="bp.res_ptb.rdata")
+#save(bp.res, file="bp.res_healthy.rdata")
+#save(bp.res, file="bp.res_ptb_ourSC.rdata")
+#save(bp.res, file="bp.res_ptb_newman.rdata")
+
+#save(bp.res, file="bp.res_ptb_SCTcount.rdata")
+#save(bp.res, file="bp.res_healthy_SCTcount.rdata")
+#save(bp.res, file="bp.res_tbm_SCTcount.rdata")
+
+#save(bp.res, file="bp.res_ptb_SCTcount_neuman.rdata")
+save(bp.res, file="R:/lenguyenhongthai/bayesprism/bp.res_ptb_rawcount_neuman.rdata")
+```
+
+# Tuning Parameters (move to section Analysis if not need optimization)
+
+```{r}
+pval = c(0.0005,0.001,0.005,0.01,0.05, 0.1)
+lfc = c(0.1,0.15,0.2, 0.25)
+
+cell_list = c('B','CD4T','CD8T','NK','Monocyte',"Neutrophil")
+
+count = 1
+for(i in 1:length(pval)){
+  for(j in 1:length(lfc)){
+    print(c(pval[i],lfc[j]))
+    sc.dat.filtered.pc.sig <- select.marker(sc.dat=sc.dat.filtered.pc,
+                                        stat=diff.exp.stat,
+                                        pval.max=pval[i],
+                                        lfc.min=lfc[j])
+    print(dim(sc.dat.filtered.pc.sig))
+    myPrism <- new.prism(
+              reference=sc.dat.filtered.pc.sig, 
+              mixture=bk.dat,
+              input.type="count.matrix", 
+              cell.type.labels = celltypes, 
+              cell.state.labels = celltypes,
+              key=NULL,
+              outlier.cut=0.01,
+              outlier.fraction=0.1,)
+    
+    bp.res <- run.prism(prism = myPrism, n.cores=14)
+    
+    theta <- get.fraction (bp=bp.res,
+            which.theta="final",
+            state.or.type="type")
+    theta <- as.data.frame(theta)
+    row.names(theta) <- gsub("X", "", row.names(theta))
+    row.names(theta) <- gsub("_PBMC", "", row.names(theta))
+    theta <- theta[ order(row.names(theta)), ]
+    
+    # for(c in 1:6){
+    #   c1 <- cell_list[c]
+    #   err_df[count,c1] <- mean((gt[,c1] - theta[,c1])^2)
+    # }
+    # count = count + 1
+    save(bp.res, file=paste0("bp.res_",pval[i],"_",lfc[j],".rdata"))
+  }
+}
+```
+
+# Choose best params
+
+```{r}
+#cell_list = c('B','CD4T','CD8T','NK','Monocyte',"Neutrophil")
+cell_list = c('Lymphocyte','Monocyte',"Neutrophil")
+
+rdf = data.frame(matrix(ncol = 6, nrow = 24))
+colnames(rdf) <- cell_list
+msedf = data.frame(matrix(ncol = 6, nrow = 24))
+colnames(msedf) <- cell_list
+
+count = 1
+
+pval = c(0.0005,0.001,0.005,0.01,0.05, 0.1)
+lfc = c(0.1,0.15,0.2, 0.25)
+for(i in 1:6){
+  for(j in 1:4) {
+    bp.res_tmp <- get(load(paste0("bp.res_",pval[i],"_",lfc[j],".rdata")))
+    theta_tmp <- get.fraction (bp=bp.res_tmp,
+                               which.theta="final",
+                               state.or.type="type")
+    theta_tmp <- as.data.frame(theta_tmp)
+    row.names(theta_tmp) <- gsub("X", "", row.names(theta_tmp))
+    row.names(theta_tmp) <- gsub("_PBMC", "", row.names(theta_tmp))
+    theta_tmp <- theta_tmp[ order(row.names(theta_tmp)), ]
+    theta_tmp <- theta_tmp[row.names(gt), ]
+    
+    if("Lymphocyte" %in% colnames(gt)) {
+      theta_tmp$Lymphocyte <- theta_tmp$B + theta_tmp$CD4T + theta_tmp$CD8T + theta_tmp$NK
+    }
+    
+    for(c in 1:length(cell_list)){
+      c1 <- cell_list[c]
+      rdf[count,c1] <- cor(gt[,c1],theta_tmp[,c1],
+                           method = 'pearson',
+                           use='pairwise.complete.obs')
+      msedf[count,c1] <- mean((gt[,c1] - theta_tmp[,c1])^2)
+    }
+    count = count + 1
+  }
+}
+
+rdf$pval.max <- rep(pval, each=4)
+rdf$lfc.min <- rep(lfc, times=6)
+rdf <- rdf[, c('pval.max','lfc.min',cell_list)]
+
+msedf$pval.max <- rep(pval, each=4)
+msedf$lfc.min <- rep(lfc, times=6)
+msedf <- msedf[, c('pval.max','lfc.min',cell_list)]
+
+write.csv(rdf,'r2_df.csv')
+write.csv(msedf,'mse_df.csv')
+```
+
+```{r}
+
+for(i in 1:6){
+  for(j in 1:4) {
+  
+  bp.res_tmp <- get(load(paste0("bp.res_",pval[i],"_",lfc[j],".rdata")))
+  theta_tmp <- get.fraction (bp=bp.res_tmp,
+                                which.theta="final",
+                                state.or.type="type")
+  theta_tmp <- as.data.frame(theta_tmp)
+  print(paste0("bp.res_",pval[i],"_",lfc[j],".rdata"))
+  print(dim(theta_tmp))
+  }
+}
+
+```
+
+```{r}
+library(ggplot2)
+library(cowplot)
+library(dplyr)
+
+r2 <- read.csv('r2_df.csv',row.names = 1)
+mse <- read.csv('mse_df.csv',row.names = 1)
+
+#df <- mse
+df <- r2
+
+p <- list()
+#cell_list = c('B','CD4T','CD8T','NK','Monocyte',"Neutrophil")
+cell_list = c('Lymphocyte','Monocyte',"Neutrophil")
+
+if(dim(df)[2]==9) {
+  cell_list = c(cell_list,"mse.allcelltype")
+}
+for(i in 1:length(cell_list)){
+  c<-cell_list[i]
+  p1 <- ggplot(df, aes(pval.max, lfc.min,color = .data[[c]])) +
+    geom_point(shape = 16, size = 7) +
+    geom_point(data=mse %>% filter(pval.max==0.05 & lfc.min == 0.1), 
+           pch=21, 
+           size=10.5, 
+           colour="darkgreen") + 
+  
+    scale_color_gradient(low = "#0091ff", high = "#f0650e") + 
+    scale_x_continuous(trans='log2',name='pval.max')+
+    scale_y_continuous(trans='log2',name='lfc.min')+
+    theme_bw()
+  
+  if(i!=7){
+    p1 <- p1+ ggtitle(paste("R2",c))
+  }
+  else {
+    p1 <- p1+ ggtitle(c)
+  }
+    p[[i]] <-ggdraw(p1)
+}
+metric_all <- ggpubr::ggarrange(
+p[[1]],p[[2]],
+p[[3]],
+#p[[4]],
+#p[[5]],
+#p[[6]],
+ncol = 3,
+nrow = 1)
+metric_all
+```
+
+```{r}
+# Choose best parameters
+bp.res_best <- get(load('bp.res_0.1_0.1.rdata'))
+
+bp.res_best <- bp.res
+theta <- get.fraction (bp=bp.res_best,
+            which.theta="final",
+            state.or.type="type")
+theta <- as.data.frame(theta)
+row.names(theta) <- gsub("X", "", row.names(theta))
+row.names(theta) <- gsub("_PBMC", "", row.names(theta))
+theta <- theta[ order(row.names(theta)), ]
+theta$Lymphocyte <- theta$B + theta$CD4T + theta$CD8T + theta$NK
+```
+
+# Analysis
+
+```{r}
+# Choose best parameters
+#bp.res_best <- get(load('R:/lenguyenhongthai/bayesprism/bp.res_ptb_rawcount_neuman.rdata'))
+#bp.res_best <- get(load('results/testing/bp.res_ptb_SCTcount.rdata'))
+
+bp.res_best <- get(load('data/bp.res_ptb.rdata'))#neuman
+#bp.res_best <- get(load('bp.res_tbm.rdata'))
+#bp.res_best <- get(load('bp.res_healthy.rdata'))
+#bp.res_best <- bp.res
+
+theta <- get.fraction (bp=bp.res_best,
+            which.theta="final",
+            state.or.type="type")
+theta <- as.data.frame(theta)
+row.names(theta) <- gsub("X", "", row.names(theta))
+row.names(theta) <- gsub("_PBMC", "", row.names(theta))
+theta <- theta[ order(row.names(theta)), ]
+dim(theta)
+if("Lymphocyte" %in% colnames(gt)) {
+  theta$Lymphocyte <- theta$B + theta$CD4T + theta$CD8T + theta$NK
+  
+  #theta$Lymphocyte <- theta$B + theta$CD4_T + theta$CD8_T + theta$NK +theta$MAIT
+  #theta$Neutrophil <- theta$Neutro
+  #theta$Monocyte <- theta$Mono_CD14 + theta$Mono_CD16
+}
+
+theta1 <- theta[row.names(gt),]
+theta1 <- na.omit(theta1)
+dim(theta1)
+gt1 <- gt[row.names(theta1),]
+
+```
+
+```{python}
+
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LinearRegression
+import os
+np.array([1,2,3,4])+1
+theta1 = pd.DataFrame(r.theta1)
+gt1 = pd.DataFrame(theta1)
+
+df.NK
+gt1
+```
+
+## 1. CNIH4
+
+```{r}
+z <- get.exp(bp=bp.res_best,
+             state.or.type="type",
+             cell.name = "Neutrophil")
+head(t(z[1:5,]))
+z[,'CNIH4']
+```
+
+## 2. Regression plot
+
+```{r}
+library(ggpmisc)
+library(ggpubr)
+library(cowplot)
+library(ggplot2)
+library(Metrics)
+#cell_list = c('B','CD4T','CD8T','NK','Monocyte',"Neutrophil")
+cell_list = c('Lymphocyte','Monocyte',"Neutrophil")
+p <- list()
+
+for (i in 1:length(cell_list)) {
+  c <- cell_list[i]
+  
+  df <- data.frame(predicted=theta1[,c]*100,groundtruth=gt1[,c])
+  rmse <- rmse(theta1[,c]*100,gt1[,c])
+  p1<-ggplot(data=df, aes(x=groundtruth,y=predicted))+
+      geom_point(alpha=0.8,col='red')+
+      theme_bw()+
+      stat_poly_line(se=T) +
+      stat_cor(cor.coef.name = "r",size = 7,method = 'pearson')+
+      theme_bw()+
+      ylab(paste0(c," predicted"))+
+      xlab(paste0(c," groundtruth"))+
+    ggtitle(paste0("PTB, ","RMSE = ",round(rmse,2)))+
+      theme(plot.title = element_text(size = 15),
+            legend.position = "none",
+            axis.text = element_text(size = 15),
+            axis.text.x=element_text(color="black",size=13,face="bold"),
+            axis.title.x = element_text(size = 15,color="black",face="bold"),
+            axis.text.y=element_text(color="black",size=15),
+            axis.title.y = element_text(size = 15,color="black",face="bold"),
+            legend.text = element_text(size = 15),
+            legend.title = element_text( colour="black", size=12),
+            legend.key = element_rect(colour = NA),
+            strip.text=element_text(face = "bold",size=12))
+  p[[i]] <-ggdraw(p1)
+}
+
+regs <- ggpubr::ggarrange(
+p[[1]],
+p[[2]],
+p[[3]],
+#p[[4]],
+#p[[5]],
+#p[[6]],
+ncol =3,nrow=1)
+
+#png(file="scatterplot_BayesPrism.png",res=600, units = 'in', width=45, height =30) #30:18
+regs
+#dev.off()
+
+```
+
+## 3. Visualize Cell population for a patient (err)
+
+```{r}
+
+#cell_list = c('B','CD4T','CD8T','NK','Monocyte',"Neutrophil")
+cell_list = c('Lymphocyte','Monocyte',"Neutrophil")
+tmp0 <- gt[,cell_list]
+p<-list()
+for(i in 1:dim(theta)[1]) {
+  p0 <- rownames(theta)[i]
+  tmp1 <- as.data.frame(t(theta[p0,]))
+  tmp1$cell_types <- rownames(tmp1)
+  tmp1$group <- c(rep('predicted', each=6))
+  
+  tmp2 <- as.data.frame(t(tmp0[p0,]))
+  tmp2$cell_types <- rownames(tmp2)
+  tmp2$group <- c(rep('groudtruth', each=6))
+  tmp <- rbind(tmp1,tmp2)
+  
+  p1 <- ggplot(tmp, aes(x=cell_types, y=.data[[p0]],fill=group)) + 
+    geom_bar(position="dodge", stat="identity") +
+    theme(axis.text.x = element_text(angle = 45, hjust=1))
+  p[[i]]<-ggdraw(p1)
+}
+
+cellpops <- ggpubr::ggarrange(
+          p[[1]],p[[2]],
+          p[[3]],p[[4]],
+          p[[5]],p[[6]],
+          p[[7]],p[[8]],
+          p[[9]],p[[10]],
+          p[[1]],p[[12]],
+          ncol =4,nrow=3)
+
+# png(file="CellPop_BayesPrism.png",res=600, units = 'in', width=45, height =30)#30:18
+cellpops
+# dev.off()
+```
+
+## 2. ssGSEA Analysis on
+
+```{r}
+get_genelist_pathway_kegg <- function(hsa_ID){
+  library("KEGGREST")
+  names <- keggGet(hsa_ID)[[1]]$GENE
+  namesodd <-  names[seq(0,length(names),2)]
+  namestrue <- gsub("/;.*","",namesodd)
+}
+#T cell receptor signaling pathway - Homo sapiens (human)
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660")
+```
+
+```{r}
+# extract posterior mean of cell type-specific gene expression count matrix Z  
+z <- get.exp(bp=bp.res,
+             state.or.type="type",
+             cell.name = "Neutrophil")
+z_TCR_signaling <- round(z[,TCR_signaling[TCR_signaling %in% colnames(z)]])
+
+huangPar <- GSVA::gsvaParam(t(z_TCR_signaling),
+                      gset.idx.list=list(TCR_signaling = colnames(z_TCR_signaling)),
+                      method="ssgsea")
+
+tmp <- gsva(t(z_TCR_signaling), 
+            gset.idx.list=list(TCR_signaling = colnames(z_TCR_signaling)),
+            method="ssgsea")
+tmp
+```
+
+```{r}
+library(GSVA)
+library(BiocParallel)
+library(ReactomeContentService4R)
+IFN_alpha_beta<-event2Ids(event.id = "R-HSA-909733.9")
+IFN_gamma<-event2Ids(event.id = "R-HSA-877300.7")
+
+#PD-L1 expression and PD-1 checkpoint pathway in cancer - Homo sapiens (human) hsa05235
+PD_L1<-get_genelist_pathway_kegg(hsa_ID = "hsa05235") 
+#T cell receptor signaling pathway - Homo sapiens (human)
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660") 
+# targeted_pathways<-list(IFN_alpha_beta=IFN_alpha_beta$geneSymbol,IFN_gamma=IFN_gamma$geneSymbol,PD_L1=PD_L1,TCR_signaling=TCR_signaling)
+
+tmp <- gsva(t(z_TCR_signaling), 
+            gset.idx.list=list(TCR_signaling = colnames(z_TCR_signaling)),
+            method="ssgsea")
+tmp
+```
+
+```{r}
+ssgsea = function(X, gene_sets, alpha = 0.25, scale = T, norm = F, single = T) {
+    row_names = rownames(X)
+    num_genes = nrow(X)
+    gene_sets = lapply(gene_sets, function(genes) {which(row_names %in% genes)})
+
+    # Ranks for genes
+    R = matrixStats::colRanks(X, preserveShape = T, ties.method = 'average')
+    # Calculate enrichment score (es) for each sample (column)
+    es = apply(R, 2, function(R_col) {
+        gene_ranks = order(R_col, decreasing = TRUE)
+ de
+        # Calc es for each gene set
+        es_sample = sapply(gene_sets, function(gene_set_idx) {
+            # pos: match (within the gene set)
+            # neg: non-match (outside the gene set)
+            indicator_pos = gene_ranks %in% gene_set_idx
+            indicator_neg = !indicator_pos
+
+            rank_alpha  = (R_col[gene_ranks] * indicator_pos) ^ alpha
+
+            step_cdf_pos = cumsum(rank_alpha)    / sum(rank_alpha)
+            step_cdf_neg = cumsum(indicator_neg) / sum(indicator_neg)
+
+            step_cdf_diff = step_cdf_pos - step_cdf_neg
+
+            # Normalize by gene number
+            if (scale) step_cdf_diff = step_cdf_diff / num_genes
+
+            # Use ssGSEA or not
+            if (single) {
+                sum(step_cdf_diff)
+            } else {
+                step_cdf_diff[which.max(abs(step_cdf_diff))]
+            }
+        })
+        unlist(es_sample)
+    })
+    if (length(gene_sets) == 1) es = matrix(es, nrow = 1)
+
+    # Normalize by absolute diff between max and min
+    if (norm) es = es / diff(range(es))
+
+    # Prepare output
+    rownames(es) = names(gene_sets)
+    colnames(es) = colnames(X)
+    return(es)
+}
+```
+
+```{r}
+tmp <- ssgsea(t(z_TCR_signaling), list(TCR_signaling = colnames(z_TCR_signaling)), scale = FALSE, norm = FALSE)
+
+```
+
+```{r}
+TCR_signaling
+```
