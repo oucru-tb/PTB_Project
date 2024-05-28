@@ -58,7 +58,7 @@ library(ggpubr)
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
 path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
-                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/Triet_Results")
+                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/FinalResults")
 ```
 
 ```{r}
@@ -119,9 +119,21 @@ rownames(impute_df) <- impute_df$Mixture
 impute_df$Mixture <- NULL
 
 ###------BayesPrism------###
-load(paste0(path_input,"Data/deconvolution_results/bp.res_ptb_SCnewman_01_01.RData"))
-load(paste0(path_input,"Data/deconvolution_results/bp.res_healthy_SCnewman_01_01.RData"))
-load(paste0(path_input,"Data/deconvolution_results/bp.res_tbm_SCnewman_01_01.RData"))
+load(paste0(path_output,"/deconvolution/bp.res_ptb_PBMC_01_01.RData"))
+load(paste0(path_output,"/deconvolution/bp.res_healthy_PBMC_01_01.RData"))
+load(paste0(path_output,"/deconvolution/bp.res_tbm_PBMC_01_01.RData"))
+```
+
+```{r}
+load(paste0(path_output,"/deconvolution/bp.res_healthy_PBMC_01_01.RData"))
+healthy.theta <- ptb.theta
+healthy.z <- ptb.z
+save(healthy.theta,healthy.z,file=paste0(path_output,"/deconvolution/bp.res_healthy_PBMC_01_01.RData"))
+
+load(paste0(path_output,"/deconvolution/bp.res_tbm_PBMC_01_01.RData"))
+tbm.theta <- ptb.theta
+tbm.z <- ptb.z
+save(tbm.theta,tbm.z,file=paste0(path_output,"/deconvolution/bp.res_tbm_PBMC_01_01.RData"))
 ```
 
 Split samples by low and high CNIH4 (refactor later)
@@ -727,9 +739,12 @@ p <- ggplot(data=theta_long,
        aes(x = factor(group, level = c('Healthy','PTB','TBM (HIV-)','TBM (HIV+)')),
            color=factor(group, level = c('Healthy','PTB','TBM (HIV-)', 'TBM (HIV+)')),
            y=value,))+
-  facet_wrap(~factor(name, level=c('B','CD4T','CD8T','NK','Monocyte','Neutrophil')), ncol = 6)+
+  facet_wrap(~factor(name, level=celltypes), ncol = 6,scale='free')+
   geom_boxplot() +
   geom_point(position=position_jitterdodge(jitter.width =0.3),alpha=0.1)+
+  # stat_pvalue_manual(stat.test, 
+  #                    label = 'p.signif',
+  #                    tip.length = 0,vjust=0.2) +
   scale_color_manual(values=c("#A3BE8C","#81A1C1","#B48EAD","#D08770"))+
   labs(color='Group')+ 
   xlab('Cell type')+
@@ -745,14 +760,42 @@ p <- ggplot(data=theta_long,
         axis.text.y=element_text(color="black",size=20),
         axis.title.y = element_text(size = 20,color="black",face="bold"),
         axis.title= element_text(size = 40,color="black",face="bold"),
-        strip.text = element_text(face="bold",size=14)) +
-  stat_pvalue_manual(stat.test, 
-                     label = 'p.signif',
-                     tip.length = 0,vjust=0.2)
+        strip.text = element_text(face="bold",size=14))
+
 
 #png(file=paste0(path_output,"/BayesPrism_CellPops.png"),res=900, units = 'in', width=17, height = 7)
 p
 #dev.off()
+```
+
+#### Heatmap TCR signaling pathways
+
+```{r}
+library(ReactomeContentService4R) # Extract data from the three pathways
+
+IFN_alpha_beta<-event2Ids(event.id = "R-HSA-909733.9")
+IFN_gamma<-event2Ids(event.id = "R-HSA-877300.7")
+PD_L1<-get_genelist_pathway_kegg(hsa_ID = "hsa05235") 
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660")
+
+Heatmap(mat,
+        name = 'corr.',
+        col = col_fun,
+        heatmap_legend_param = list(legend_height = unit(4, "cm")),
+        rect_gp = gpar(col = "black", lwd = 1),
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          if(i==j) grid.text(sprintf("%.f", mat[i, j]), x, y, gp = gpar(fontsize = 10))
+          if(i!=j & p.mat[i, j]<=0.05) grid.text(sprintf("%.2f", mat[i, j]), x, y, gp = gpar(fontsize = 10))},
+        column_names_rot = 45)
+```
+
+```{r}
+ptb_tcr <- as.data.frame(ptb.z[,,'Neutro']) %>% select(any_of(TCR_signaling))
+ptb_tcr <-vst(round(t(ptb_tcr)),
+              blind=T,
+              nsub = 200,
+              fitType='parametric')
+ptb_tcr
 ```
 
 #### 3.5.2. Cell counts
