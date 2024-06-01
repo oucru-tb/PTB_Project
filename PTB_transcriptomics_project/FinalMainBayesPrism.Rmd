@@ -7,8 +7,66 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(cache = TRUE)
+
+library(ggpmisc)
+library(ggpubr)
+library(cowplot)
+library(ggplot2)
+library(Metrics)
 suppressWarnings(library(BayesPrism))
-keep_data = TRUE #dont remove pre
+#library(InstaPrism)
+
+#setwd("~/tb-master/projects/BayesPrism")
+
+plot_regs <- function(theta1,gt1,show_cutoff = TRUE,name='data') {
+    cell_list = c('Lymphocyte','Monocyte',"Neutrophil",'Myeloid')
+    p <- list()
+    
+    for (i in 1:length(cell_list)) {
+      c <- cell_list[i]
+      df <- data.frame(predicted=theta1[,c],groundtruth=gt1[,c]/100)
+      
+      rmse <- mse(gt1[,c]/100, theta1[,c])
+    
+      p1<-ggplot(data=df, aes(x=groundtruth,y=predicted))+
+          geom_point(alpha=0.8,col='salmon')+
+          stat_poly_line(se=T,col='#4164a9') +
+          stat_cor(cor.coef.name = "r",size = 7,method = 'pearson')+
+          ylab(paste0(c," estimated"))+
+          xlab(paste0(c," true"))+
+          theme_bw()+
+          ggtitle(paste0("MSE = ",round(rmse,4)))+
+          theme(plot.title = element_text(size = 15),
+                legend.position = "none",
+                axis.text = element_text(size = 15),
+                axis.text.x=element_text(color="black",size=13,face="bold"),
+                axis.title.x = element_text(size = 15,color="black",face="bold"),
+                axis.text.y=element_text(color="black",size=15,face="bold"),
+                axis.title.y = element_text(size = 15,color="black",face="bold"),
+                legend.text = element_text(size = 15),
+                legend.title = element_text( colour="black", size=12),
+                legend.key = element_rect(colour = NA),
+                strip.text=element_text(face = "bold",size=12))
+      p[[i]] <-ggdraw(p1)
+    }
+    
+    regs <- ggpubr::ggarrange(
+    p[[1]],
+    p[[2]],
+    p[[3]],
+    p[[4]],
+    
+    ncol = 4, nrow = 1)
+  if(show_cutoff) {
+      regs <- annotate_figure(regs, top = text_grob(paste0(name, ", pval.max=", pval, ", lfc.min=",lfc), 
+                 color = "darkblue", face = "bold", size = 14))
+  }
+  else {
+      regs <- annotate_figure(regs, top = text_grob(paste0(name), 
+                 color = "darkblue", face = "bold", size = 14))
+  }
+  return(regs)
+}
 ```
 
 # Import Data
@@ -16,7 +74,46 @@ keep_data = TRUE #dont remove pre
 ## Bulk PTB, ref Azimuth
 
 ```{r}
+library(stringr)
+library(dplyr)
 
+path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
+                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
+path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
+                     "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/FinalResults")
+
+#Azimuth #3
+our_celltypes <- read.csv(paste0(path_input,'Data/deconvolution/#3-Azimuth_Neutro(Subset)Metadata.tsv'),sep='\t',encoding= "utf-8")$celltype.l2
+celltypes <- our_celltypes
+sc.dat <- read.csv(paste0(path_input,'Data/deconvolution/#3-Azimuth_Neutro(Subset)data.tsv'),sep='\t')
+sc.dat <- as.data.frame(t(sc.dat))
+
+load(paste0(path_input,'/Data/clinical_data_HC_CNS_IF_PTB_TBM.RData'))
+load(paste0(path_input, "Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
+ptb_id <- Cli_All %>% filter(trial_number=='MDR_PTB'|trial_number=='DS_PTB') %>% select('LIMS_ID')
+healthy_id <- Cli_All %>% filter(Timepoint=='D0' & (trial_number=='43TB'|trial_number=='HV')) %>% select('LIMS_ID')
+tbm_id <- Cli_All %>% filter(Timepoint=='D0' & (trial_number=='26TB'|trial_number=='27TB')) %>% select('LIMS_ID')
+
+bk.dat0 <- merge(count_all,anno[,c('gene_symbol','gene_id')],by=0)
+bk.dat0 <- bk.dat0[!duplicated(bk.dat0$gene_symbol),]
+rownames(bk.dat0) <- bk.dat0$gene_symbol
+
+g <- 'tbm' #''ptb,'healthy','tbm'
+ids <- ifelse(g == 'ptb', ptb_id, ifelse(g=='tbm',tbm_id, healthy_id))[[1]]
+bk.dat <- as.data.frame(t(bk.dat0[,ids]))
+
+gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
+           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE)
+
+gt <- na.omit(gt)
+rownames(gt) <- gt$LIMS_ID
+gt$LIMS_ID <- NULL
+```
+
+```{r}
+################################################################################################################
 #Azimuth #3
 our_celltypes <- read.csv('data/220524/#3-Azimuth_Neutro(Subset)Metadata.tsv',sep='\t',encoding= "utf-8")$celltype.l2
 celltypes <- our_celltypes
@@ -36,27 +133,35 @@ sc.dat <- as.data.frame(t(sc.dat))
 # sc.dat <- as.data.frame(t(sc.dat))
 
 #Newman
-# newman_celltypes <- read.csv('data/Newmandata/newman_celltypes.txt',sep='\t')$Celltype
+# newman_celltypes <- read.csv('/home/ubuntu/tb_volume/tb-master/projects/BayesPrism/data/Newmandata/newman_celltypes.txt',sep='\t')$Celltype
 # celltypes <- newman_celltypes
-# sc.dat <- read.csv('data/Newmandata/newman_SCdata.tsv',sep='\t',
+# sc.dat <- read.csv('/home/ubuntu/tb_volume/tb-master/projects/BayesPrism/data/Newmandata/newman_SCdata.tsv',sep='\t',
 #                    row.names = 1,
 #                    header=TRUE,check.names = FALSE
 #                    ) %>% t() %>% as.data.frame()
 
+################################################################################################################
+#Bulk Data
+
+
 load("data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData") #bulk
-load("data/Most_variance_RNA_genes.Rdata")
 load('data/clinical_data_HC_CNS_IF_PTB_TBM.RData') #groundtruth
 
+g <- 'tbm' #''ptb,'healthy','tbm'
 ptb_id <- Cli_All %>% filter(trial_number=='MDR_PTB'|trial_number=='DS_PTB') %>% select('LIMS_ID')
-bk.dat <- merge(count_all,anno[,c('gene_symbol','gene_id')],by=0)
-bk.dat <- bk.dat[!duplicated(bk.dat$gene_symbol),]
-rownames(bk.dat) <- bk.dat$gene_symbol
-bk.dat <- as.data.frame(t(bk.dat[,ptb_id$LIMS_ID]))
+healthy_id <- Cli_All %>% filter(Timepoint=='D0' & (trial_number=='43TB'|trial_number=='HV')) %>% select('LIMS_ID')
+tbm_id <- Cli_All %>% filter(Timepoint=='D0' & (trial_number=='26TB'|trial_number=='27TB')) %>% select('LIMS_ID')
+
+bk.dat0 <- merge(count_all,anno[,c('gene_symbol','gene_id')],by=0)
+bk.dat0 <- bk.dat0[!duplicated(bk.dat0$gene_symbol),]
+rownames(bk.dat0) <- bk.dat0$gene_symbol
+ids <- ifelse(g == 'ptb', ptb_id, ifelse(g=='tbm',tbm_id, healthy_id))[[1]]
+bk.dat <- as.data.frame(t(bk.dat0[,ids]))
 
 gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
-           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
-           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
-           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE)
+                 Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+                 Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+                 Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE)
 
 gt <- na.omit(gt)
 rownames(gt) <- gt$LIMS_ID
@@ -85,106 +190,123 @@ head(colnames(sc.dat))
 
 ```{r}
 # plot.cor.phi(input=sc.dat,input.labels=celltypes,title="cell state correlation",cexRow=0.2, cexCol=0.2,margins=c(2,2))
-# sc.stat <- plot.scRNA.outlier(input=sc.dat,cell.type.labels=celltypes, species="hs", return.raw=TRUE)
+# 
+# sc.stat <- plot.scRNA.outlier(input=sc.dat,
+#                               cell.type.labels=celltypes,
+#                               species="hs", 
+#                               return.raw=TRUE)
 # bk.stat <- plot.bulk.outlier(bulk.input=bk.dat, sc.input=sc.dat, cell.type.labels=celltypes, species="hs",return.raw=TRUE)
+gc()
 sc.dat.filtered <- cleanup.genes(input=sc.dat,
                                 input.type="count.matrix",
                                 species="hs",
                                 gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY"),
                                 exp.cells=5)
-
+gc()
 sc.dat.filtered.pc <-  select.gene.type(sc.dat.filtered, gene.type = "protein_coding")
-
-diff.exp.stat <- get.exp.stat(sc.dat=sc.dat[,colSums(sc.dat>0)>3],# filter genes to reduce memory use
+gc()
+diff.exp.stat <- get.exp.stat(sc.dat=sc.dat[,colSums(sc.dat>0)>5],
                               cell.type.labels=celltypes,
                               cell.state.labels=celltypes,
                               cell.count.cutoff=50,
                               n.cores=20)
-pval = 0.01
+gc()
+```
+
+# InstaPrism
+
+```{r}
+library(ReactomeContentService4R) # Extract data from the three pathways
+
+get_genelist_pathway_kegg <- function(hsa_ID){
+  library("KEGGREST")
+  names <- keggGet(hsa_ID)[[1]]$GENE
+  namesodd <-  names[seq(0,length(names),2)]
+  namestrue <- gsub("\\;.*","",namesodd)
+}
+
+IFN_alpha_beta<-event2Ids(event.id = "R-HSA-909733.9")
+IFN_gamma<-event2Ids(event.id = "R-HSA-877300.7")
+PD_L1<-get_genelist_pathway_kegg(hsa_ID = "hsa05235")
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660")
+```
+
+```{r}
+library(InstaPrism)
+# Filtering genes
+pval = 0.1
 lfc = 0.1
 sc.dat.filtered.pc.sig <- select.marker(sc.dat=sc.dat.filtered.pc,
                                         stat=diff.exp.stat,
                                         pval.max=pval,
                                         lfc.min=lfc)
 
+pathway_genes <- unique(c(IFN_gamma$geneSymbol,TCR_signaling))
+pathway_genes <- Reduce(intersect,list(pathway_genes,colnames(sc.dat))) #intersect pathways w/ sc.dat
+
 sc.dat.filtered.pc.sig$CD274 <- sc.dat.filtered.pc$CD274
-gc()
+sc.dat.filtered.pc.sig[,pathway_genes] <- sc.dat[,pathway_genes]
+
 dim(sc.dat.filtered.pc.sig)
-```
+gc()
 
-# InstaPrism
-
-```{r}
-library(ggpmisc)
-library(ggpubr)
-library(cowplot)
-library(ggplot2)
-library(Metrics)
-
-plot_regs <- function(theta1,gt1,name='data') {
-    cell_list = c('Lymphocyte','Monocyte',"Neutrophil",'Myeloid')
-    p <- list()
-    
-    for (i in 1:length(cell_list)) {
-      c <- cell_list[i]
-      df <- data.frame(predicted=theta1[,c]*100,groundtruth=gt1[,c])
-      
-      rmse <- rmse(theta1[,c]*100,gt1[,c])
-      p1<-ggplot(data=df, aes(x=groundtruth,y=predicted))+
-          geom_point(alpha=0.8,col='salmon')+
-          stat_poly_line(se=T,col='midnightblue') +
-          stat_cor(cor.coef.name = "r",size = 7,method = 'pearson')+
-          ylab(paste0(c," estimated"))+
-          xlab(paste0(c," true"))+
-          theme_bw()+
-          ggtitle(paste0("PTB, ","RMSE = ",round(rmse,2)))+
-          theme(plot.title = element_text(size = 15),
-                legend.position = "none",
-                axis.text = element_text(size = 15),
-                axis.text.x=element_text(color="black",size=13,face="bold"),
-                axis.title.x = element_text(size = 15,color="black",face="bold"),
-                axis.text.y=element_text(color="black",size=15),
-                axis.title.y = element_text(size = 15,color="black",face="bold"),
-                legend.text = element_text(size = 15),
-                legend.title = element_text( colour="black", size=12),
-                legend.key = element_rect(colour = NA),
-                strip.text=element_text(face = "bold",size=12))
-      p[[i]] <-ggdraw(p1)
-    }
-    
-    regs <- ggpubr::ggarrange(
-    p[[1]],
-    p[[2]],
-    p[[3]],
-    p[[4]],
-    
-    ncol = 4, nrow = 1)
-  
-  regs <- annotate_figure(regs, top = text_grob(paste0("Bulk PTB, Reference SC ",name, "\npval.max=", pval, ", lfc.min=",lfc), 
-                 color = "darkblue", face = "bold", size = 14))
-  return(regs)
-}
-```
-
-```{r}
-library(InstaPrism)
-
+# run InstaPrism
+set.seed(42)
 refPhi_obj = refPrepare(t(sc.dat.filtered.pc.sig), celltypes, celltypes)
-
-InstaPrism.res.initial = InstaPrism(input_type = 'refPhi',bulk_Expr = t(bk.dat) ,refPhi = refPhi_obj, n.iter=100,
-                                    convergence.plot=T, verbose = T)
+table(celltypes)
+InstaPrism.res.initial = InstaPrism(input_type = 'refPhi_cs',
+                                    bulk_Expr = t(bk.dat),
+                                    refPhi = refPhi_obj,
+                                    n.iter=100,
+                                    outlier.cut=0.01,
+                                    outlier.fraction=0.1,
+                                    convergence.plot=F, verbose = T
+                                    )
 
 updated_obj = InstaPrism_update(InstaPrism.res.initial, 
                                 bulk_Expr =  t(bk.dat), 
                                 n.iter = 100, 
                                 cell.types.to.update ='Neutro')
 
-
 bp.res <- updated_obj
+
+ptb.theta <- as.data.frame(t(bp.res@theta))
+ptb.z <- get_Z_array(bp.res, resolution = 'ct')
+dim(ptb.z)
+#tbm.theta <- ptb.theta
+#tbm.z <- ptb.z
+#save(tbm.theta,tbm.z,file=paste0(path_output,"/deconvolution/bp.res_tbm2_PBMC_01_01.RData"))
+
+#save(ptb.theta, ptb.z, file = "results/bp.res_healthy_PBMC_01_01.RData")
+
+# save(InstaPrism.res.initial,file = 'bp.res.init.RData')
+# save(updated_obj,file = 'bp.res.updated.RData')
+for (i in a) {
+  if(i %notin% b) {
+    print(i)
+  }
+}
+"S100A9"#???? (solved)
 ```
 
 ```{r}
-#theta <- as.data.frame(t(InstaPrism.res.initial@Post.ini.ct@theta))
+library(venn)
+`%notin%` <- Negate(`%in%`)
+set1 <- colnames(ptb.z[,,1])
+set2 <- IFN_gamma$geneSymbol
+set3 <- TCR_signaling
+set4 <- rownames(refPhi_obj@phi.cs)#colnames(sc.dat.filtered.pc.sig)
+set5 <- colnames(bk.dat)
+x <- list(#Deconvoled = set1,
+          bk.dat = set5,
+          #TFNgamma = set2, 
+          #TCRsignaling = set3,
+          sc.dat.filtered.pc.sig=set4)
+venn(x,ilabels = "counts",zcolor = "red, white, white")
+```
+
+```{r}
+#theta <- as.data.frame(t(InstaPrism.res.initial@Post.ini.ct@theta)) #initial
 theta <- as.data.frame(t(bp.res@theta))
 theta <- theta[ order(row.names(theta)),]
 
@@ -194,15 +316,25 @@ theta$Monocyte <- theta$`CD14 Mono`+theta$`CD16 Mono`
 theta$Myeloid <- theta$Monocyte+theta$Neutrophil
 
 #theta$Lymphocyte <- theta$B + theta$CD8T +theta$CD4T +theta$NK
-
+gt['HOA7812A12','Monocyte'] <- 4.5
 theta1 <- theta[row.names(gt),]
 theta1 <- na.omit(theta1)
 gt1 <- gt[row.names(theta1),]
 
 gt1$Myeloid <- gt1$Monocyte+gt1$Neutrophil
 
-regs <- plot_regs(theta1,gt1,name='Azimuth #3 (Updated)')
+regs <- plot_regs(theta1,gt1,name=g,show_cutoff = TRUE)
 regs
+```
+
+# Main run InstaPrism
+
+```{r}
+run_BayesPrism <- function(group = g, pval.max=0.1, pval.min=0.1) {
+  print('hehehe')
+  return(4)
+}
+run_BayesPrism(g,pval.max=0.1, pval.min=0.1)
 ```
 
 # Tuning Parameters
