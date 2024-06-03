@@ -55,6 +55,12 @@ library(circlize)
 library(rstatix)
 library(ggpubr)
 library(colorRamps)
+library(Metrics)
+library(ggpmisc)
+library(ggpubr)
+library(cowplot)
+library(ggplot2)
+library(Metrics)
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
 path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
@@ -119,9 +125,17 @@ rownames(impute_df) <- impute_df$Mixture
 impute_df$Mixture <- NULL
 
 ###------BayesPrism------###
-load(paste0(path_output,"/deconvolution/bp.res_ptb_PBMC_01_01.RData"))
-load(paste0(path_output,"/deconvolution/bp.res_healthy_PBMC_01_01.RData"))
-load(paste0(path_output,"/deconvolution/bp.res_tbm_PBMC_01_01.RData"))
+load(paste0(path_output,"/deconvolution/bp.res_ptb2_PBMC_01_01.RData"))
+load(paste0(path_output,"/deconvolution/bp.res_healthy2_PBMC_01_01.RData"))
+load(paste0(path_output,"/deconvolution/bp.res_tbm2_PBMC_01_01.RData"))
+gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
+           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE)
+
+gt <- na.omit(gt)
+rownames(gt) <- gt$LIMS_ID
+gt$LIMS_ID <- NULL
 ```
 
 ```{r}
@@ -172,6 +186,56 @@ dim(vst_data2) # 295 31427
 ## 2. Helper functions
 
 ```{r}
+plot_regs <- function(theta1,gt1,show_cutoff = TRUE,name='data') {
+    cell_list = c('Lymphocyte','Monocyte',"Neutrophil",'Myeloid')
+    p <- list()
+    
+    for (i in 1:length(cell_list)) {
+      c <- cell_list[i]
+      df <- data.frame(predicted=theta1[,c],groundtruth=gt1[,c]/100)
+      
+      rmse <- mse(gt1[,c]/100, theta1[,c])
+    
+      p1<-ggplot(data=df, aes(x=groundtruth,y=predicted))+
+          geom_point(alpha=0.8,col='salmon')+
+          stat_poly_line(se=T,col='#4164a9') +
+          stat_cor(cor.coef.name = "r",size = 7,method = 'pearson')+
+          ylab(paste0(c," estimated"))+
+          xlab(paste0(c," true"))+
+          theme_bw()+
+          ggtitle(paste0("MSE = ",round(rmse,4)))+
+          theme(plot.title = element_text(size = 15),
+                legend.position = "none",
+                axis.text = element_text(size = 15),
+                axis.text.x=element_text(color="black",size=13,face="bold"),
+                axis.title.x = element_text(size = 15,color="black",face="bold"),
+                axis.text.y=element_text(color="black",size=15,face="bold"),
+                axis.title.y = element_text(size = 15,color="black",face="bold"),
+                legend.text = element_text(size = 15),
+                legend.title = element_text( colour="black", size=12),
+                legend.key = element_rect(colour = NA),
+                strip.text=element_text(face = "bold",size=12))
+      p[[i]] <-ggdraw(p1)
+    }
+    
+    regs <- ggpubr::ggarrange(
+    p[[1]],
+    p[[2]],
+    p[[3]],
+    p[[4]],
+    
+    ncol = 4, nrow = 1)
+  if(show_cutoff) {
+      regs <- annotate_figure(regs, top = text_grob(paste0(name, ", pval.max=", pval, ", lfc.min=",lfc), 
+                 color = "darkblue", face = "bold", size = 14))
+  }
+  else {
+      regs <- annotate_figure(regs, top = text_grob(paste0(name), 
+                 color = "darkblue", face = "bold", size = 14))
+  }
+  return(regs)
+}
+
 posterior_predict_hurdle_gaussian <- function(i, prep, ...) {
   mu <- brms::get_dpar(prep, "mu", i = i)
   sigma <- brms::get_dpar(prep, "sigma", i = i)
@@ -676,10 +740,20 @@ tbm27.theta <- tbm.theta[id27TB,]
 tbm26.z <- tbm.z[id26TB,,]
 tbm27.z <- tbm.z[id27TB,,]
 
-theta_long <- rbind(pivot_longer(healthy.theta,celltypes) %>% mutate(group = 'Healthy'),
-                    pivot_longer(ptb.theta,celltypes) %>% mutate(group = 'PTB'),
-                    pivot_longer(tbm27.theta,celltypes) %>% mutate(group = 'TBM (HIV-)'),
-                    pivot_longer(tbm26.theta,celltypes) %>% mutate(group = 'TBM (HIV+)'))
+
+l = list(healthy.theta,ptb.theta,tbm26.theta,tbm27.theta)
+
+for( i in seq_along(l)){
+  l[[i]]$Neutrophil <- l[[i]]$Neutro
+  l[[i]]$Lymphocyte <- l[[i]]$`B naive` + l[[i]]$`B memory` + l[[i]]$`CD8 Naive`+l[[i]]$`CD8 TM` + l[[i]]$MAIT + l[[i]]$NK + l[[i]]$`CD4 TM`+l[[i]]$`CD4 Naive`+l[[i]]$`CD4 CTL`+l[[i]]$OtherT +l[[i]]$Treg + l[[i]]$Plasmablast
+  l[[i]]$Monocyte <- l[[i]]$`CD14 Mono`+l[[i]]$`CD16 Mono`
+  l[[i]]$Myeloid <- l[[i]]$Monocyte+l[[i]]$Neutrophil
+  }
+
+healthy.theta <- l[[1]]
+ptb.theta <- l[[2]]
+tbm26.theta <- l[[3]]
+tbm27.theta <- l[[4]]
 
 # WBC_df <- clinical_data_HC_CNS_IF_PTB_TBM[,c('LIMS_ID','WBC')]
 # row.names(WBC_df) <- WBC_df$LIMS_ID
@@ -725,10 +799,40 @@ theta_long <- rbind(pivot_longer(healthy.theta,celltypes) %>% mutate(group = 'He
 #                     pivot_longer(as.data.frame(tbm26_vst.z['CD274',,]), celltypes) %>% mutate(group = 'TBM (HIV+)'))
 ```
 
+```{r}
+theta <- as.data.frame(healthy.theta)
+#theta <- as.data.frame(t(bp.res@theta))
+theta <- theta[ order(row.names(theta)),]
+
+theta$Neutrophil <- theta$Neutro
+theta$Lymphocyte <- theta$`B naive` + theta$`B memory` + theta$`CD8 Naive`+theta$`CD8 TM` + theta$MAIT + theta$NK + theta$`CD4 TM`+theta$`CD4 Naive`+theta$`CD4 CTL`+theta$OtherT +theta$Treg + theta$Plasmablast
+theta$Monocyte <- theta$`CD14 Mono`+theta$`CD16 Mono`
+theta$Myeloid <- theta$Monocyte+theta$Neutrophil
+
+#theta$Lymphocyte <- theta$B + theta$CD8T +theta$CD4T +theta$NK
+gt['HOA7812A12','Monocyte'] <- 4.5
+theta1 <- theta[row.names(gt),]
+theta1 <- na.omit(theta1)
+gt1 <- gt[row.names(theta1),]
+
+gt1$Myeloid <- gt1$Monocyte+gt1$Neutrophil
+
+regs <- plot_regs(theta1,gt1,name='PTB',show_cutoff = FALSE)
+regs
+```
+
 #### Cell types Proportions
 
 ```{r}
 library(ggsci)
+
+celltypes <- colnames(ptb.theta)[18:20]
+celltypes <- colnames(ptb.theta)[1:17]
+
+theta_long <- rbind(pivot_longer(healthy.theta,celltypes) %>% mutate(group = 'Healthy'),
+                    pivot_longer(ptb.theta,celltypes) %>% mutate(group = 'PTB'),
+                    pivot_longer(tbm27.theta,celltypes) %>% mutate(group = 'TBM (HIV-)'),
+                    pivot_longer(tbm26.theta,celltypes) %>% mutate(group = 'TBM (HIV+)'))
 
 stat.test <- theta_long %>%
   group_by(name) %>%
@@ -744,9 +848,9 @@ p <- ggplot(data=theta_long,
   facet_wrap(~factor(name, level=celltypes), ncol = 6,scale='free')+
   geom_boxplot() +
   geom_point(position=position_jitterdodge(jitter.width =0.3),alpha=0.1)+
-  stat_pvalue_manual(stat.test,
-                     label = 'p.signif',
-                     tip.length = 0,vjust=0.2) +
+  # stat_pvalue_manual(stat.test,
+  #                    label = 'p.signif',
+  #                    tip.length = 0,vjust=0.2) +
 
   scale_color_manual(values=c("#00A087B2","#81A1C1","#CD534C","#631840"))+
   labs(color='Group')+ 
@@ -782,21 +886,219 @@ show_col(mypal)
 
 ```{r}
 library(ReactomeContentService4R) # Extract data from the three pathways
+library(abind)
+library(comprehenr)
 
 IFN_alpha_beta<-event2Ids(event.id = "R-HSA-909733.9")
 IFN_gamma<-event2Ids(event.id = "R-HSA-877300.7")
 PD_L1<-get_genelist_pathway_kegg(hsa_ID = "hsa05235") 
 TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660")
 
-Heatmap(mat,
-        name = 'corr.',
-        col = col_fun,
-        heatmap_legend_param = list(legend_height = unit(4, "cm")),
-        rect_gp = gpar(col = "black", lwd = 1),
-        cell_fun = function(j, i, x, y, width, height, fill) {
-          if(i==j) grid.text(sprintf("%.f", mat[i, j]), x, y, gp = gpar(fontsize = 10))
-          if(i!=j & p.mat[i, j]<=0.05) grid.text(sprintf("%.2f", mat[i, j]), x, y, gp = gpar(fontsize = 10))},
-        column_names_rot = 45)
+common <- Reduce(intersect, list(colnames(healthy.z[,,1]),
+                                 colnames(ptb.z[,,1]),
+                                 colnames(tbm.z[,,1])))
+celltypes <- colnames(healthy.z[,1,])
+all.z <- abind(healthy.z[,common,],ptb.z[,common,],tbm.z[,common,],along = 1)
+level1 <- c('Neutrophil','Monocyte','Lymphocyte')
+level2 <- names(all.z[1,1,])
+# Monocyte <- c('CD14 Mono','CD16 Mono')
+# Lymphocyte <- c('B naive', 'B memory', 'CD8 Naive', 'CD8 TM', 'MAIT', 'NK', 'CD4 TM', 'CD4 Naive','CD4 CTL','OtherT' ,'Treg', 'Plasmablast')
+# Neutrophil <- c('Neutro')
+# 
+# a <- all.z[,,Neutrophil]
+# row.names(a) <- paste0(rownames(a), "_Neutrophil")
+# b <- rowSums(all.z[,,Monocyte], dims = 2)
+# row.names(b) <- paste0(rownames(b), "_Monocyte")
+# c <- rowSums(all.z[,,Lymphocyte], dims = 2)
+# row.names(c) <- paste0(rownames(c), "_Lymphocyte")
+# all.z <-rbind(a,b,c)
+dim(all.z)
+
+all.z0 <- round(t(as.matrix(all.z)))
+
+group = rep(c('Healthy','PTB','TBM27','TBM26'),times=c(30,296,207,74))
+group = as.factor(rep(group,times=3))
+celltype = as.factor(rep(level2,times=c(607,607,607)))
+coldata <- data.frame(group, celltype)
+
+dds = DESeqDataSetFromMatrix(countData = all.z0,
+                              colData = coldata,
+                              design = ~ group + celltype)
+all.z_vst <- vst(dds, blind=FALSE)
+
+cell <- 'Neutrophil'
+geneset <- TCR_signaling#IFN_gamma$geneSymbol
+sample_col <- to_vec(for(i in colnames(all.z_vst)) if(strsplit(i,"_",fixed=T)[[1]][2]==cell) i )
+all.z_vst1 <- all.z_vst[,sample_col]
+all.z_vst1 <- all.z_vst1[intersect(rownames(all.z_vst1),geneset),]
+all.z_vst1 <- assay(all.z_vst1)
+dim(all.z_vst1)
+
+# all.z0 <- round(t(a))
+# all.z_vst1 <- vst(all.z0 ,blind=FALSE,fitType = 'parametric')
+# all.z_vst1 <- all.z_vst1[intersect(rownames(all.z_vst1),geneset),]
+
+col=c("blue",'yellow',"red")
+col_fun = colorRamp2(c(6,8,9), col)
+hm1 <- Heatmap(all.z_vst1,
+        #col=col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,
+        use_raster = FALSE,
+        column_title = "Control",
+    column_title_side = "bottom")
+hm1
+
+
+hm1 <- Heatmap(all.z_vst1[,1:30],
+        name = 'expression',
+        col=col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,use_raster = FALSE,       
+        column_title = "Control", 
+    column_title_side = "bottom")
+
+hm2 <- Heatmap(all.z_vst1[,31:326],
+               name = 'expression',
+        col=col_fun,
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,
+                column_title = "PTB", 
+    column_title_side = "bottom")
+
+hm3 <- Heatmap(all.z_vst1[,327:533],
+               name = 'expression',
+        col=col_fun,
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,        
+        column_title = "TBM (HIV-)", 
+    column_title_side = "bottom")
+
+hm4 <- Heatmap(all.z_vst1[,534:607],
+               name = 'expression',
+        col=col_fun,
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,
+        column_title = "TBM (HIV+)", 
+    column_title_side = "bottom")
+
+lgd = Legend(col_fun = col_fun, title = "foo", direction = "horizontal")
+hm = hm1+hm2+hm3+hm4
+draw(hm, column_title = "Neutrophil", column_title_gp = gpar(fontsize = 16))
+```
+
+```{r}
+library(ReactomeContentService4R) # Extract data from the three pathways
+library(abind)
+
+IFN_alpha_beta<-event2Ids(event.id = "R-HSA-909733.9")
+IFN_gamma<-event2Ids(event.id = "R-HSA-877300.7")
+PD_L1<-get_genelist_pathway_kegg(hsa_ID = "hsa05235") 
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660")
+
+common <- Reduce(intersect, list(colnames(healthy.z[,,1]),
+                                 colnames(ptb.z[,,1]),
+                                 colnames(tbm.z[,,1])))
+celltypes <- colnames(healthy.z[,1,])
+all.z <- abind(healthy.z[,common,],ptb.z[,common,],tbm.z[,common,],along = 1)
+
+Monocyte <- c('CD14 Mono','CD16 Mono')
+Lymphocyte <- c('B naive', 'B memory', 'CD8 Naive', 'CD8 TM', 'MAIT', 'NK', 'CD4 TM', 'CD4 Naive','CD4 CTL','OtherT' ,'Treg', 'Plasmablast')
+Neutrophil <- c('Neutro')
+
+a <- all.z[,,Neutrophil]
+row.names(a) <- paste0(rownames(a), "_Neutrophil")
+b <- rowSums(all.z[,,Monocyte], dims = 2)
+row.names(b) <- paste0(rownames(b), "_Monocyte")
+c <- rowSums(all.z[,,Lymphocyte], dims = 2)
+row.names(c) <- paste0(rownames(c), "_Lymphocyte")
+all.z <- rbind(a,b,c)
+dim(all.z)
+
+all.z0 <- round(t(all.z))
+#all.z0 <- all.z0[rowSums(all.z0[])>0,] 
+#all.z0 <- all.z0[rowSums(all.z0)>10319,]
+dim(all.z0)
+all.z_vst <- as.data.frame(vst(all.z0,
+                         blind=F,
+                         #nsub=500, 
+                         fitType='parametric'))
+
+library(comprehenr)
+cell <- 'Lymphocyte'
+geneset <- TCR_signaling #IFN_gamma$geneSymbol
+sample_col <- to_vec(for(i in colnames(all.z_vst)) if(strsplit(i,"_",fixed=T)[[1]][2]==cell) i )
+all.z_vst1 <- all.z_vst[,sample_col]
+all.z_vst1 <- all.z_vst1[intersect(rownames(all.z_vst1),geneset),]
+dim(all.z_vst1)
+
+col=c("blue",'yellow',"red")
+col_fun = colorRamp2(c(5,7,10), col)
+
+hm1 <- Heatmap(all.z_vst1,
+        name = 'expression',
+        #col=col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,use_raster = FALSE,       
+        column_title = "Control", 
+    column_title_side = "bottom")
+hm1
+
+
+hm1 <- Heatmap(all.z_vst1[,1:30],
+        name = 'expression',
+        col=col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,use_raster = FALSE,       
+        column_title = "Control", 
+    column_title_side = "bottom")
+
+hm2 <- Heatmap(all.z_vst1[,31:326],
+               name = 'expression',
+        col=col_fun,
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,
+                column_title = "PTB", 
+    column_title_side = "bottom")
+
+hm3 <- Heatmap(all.z_vst1[,327:533],
+               name = 'expression',
+        col=col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,        
+        column_title = "TBM (HIV-)", 
+    column_title_side = "bottom")
+
+hm4 <- Heatmap(all.z_vst1[,534:607],
+               name = 'expression',
+        col=col_fun,
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,
+        column_title = "TBM (HIV+)", 
+    column_title_side = "bottom")
+lgd = Legend(col_fun = col_fun, title = "foo", direction = "horizontal")
+hm = hm1+hm2+hm3+hm4
+draw(hm, column_title = "Neutrophil", column_title_gp = gpar(fontsize = 16))
 ```
 
 ```{r}

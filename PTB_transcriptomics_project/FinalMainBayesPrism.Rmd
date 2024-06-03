@@ -74,8 +74,15 @@ plot_regs <- function(theta1,gt1,show_cutoff = TRUE,name='data') {
 ## Bulk PTB, ref Azimuth
 
 ```{r}
+sc.dat_274 <- read.csv(paste0(path_input,'Data/deconvolution/CD274.tsv'),sep='\t')
+sc.dat_274 <- as.data.frame(t(sc.dat_274))
+```
+
+```{r}
 library(stringr)
 library(dplyr)
+library(data.table)
+library(tidyverse)
 
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
@@ -85,8 +92,11 @@ path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
 #Azimuth #3
 our_celltypes <- read.csv(paste0(path_input,'Data/deconvolution/#3-Azimuth_Neutro(Subset)Metadata.tsv'),sep='\t',encoding= "utf-8")$celltype.l2
 celltypes <- our_celltypes
+
+
 sc.dat <- read.csv(paste0(path_input,'Data/deconvolution/#3-Azimuth_Neutro(Subset)data.tsv'),sep='\t')
-sc.dat <- as.data.frame(t(sc.dat))
+sc.dat <- data.frame(t(sc.dat))
+
 
 load(paste0(path_input,'/Data/clinical_data_HC_CNS_IF_PTB_TBM.RData'))
 load(paste0(path_input, "Raw_data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData"))
@@ -98,7 +108,7 @@ bk.dat0 <- merge(count_all,anno[,c('gene_symbol','gene_id')],by=0)
 bk.dat0 <- bk.dat0[!duplicated(bk.dat0$gene_symbol),]
 rownames(bk.dat0) <- bk.dat0$gene_symbol
 
-g <- 'tbm' #''ptb,'healthy','tbm'
+g <- 'healthy' #''ptb,'healthy','tbm'
 ids <- ifelse(g == 'ptb', ptb_id, ifelse(g=='tbm',tbm_id, healthy_id))[[1]]
 bk.dat <- as.data.frame(t(bk.dat0[,ids]))
 
@@ -142,7 +152,6 @@ sc.dat <- as.data.frame(t(sc.dat))
 
 ################################################################################################################
 #Bulk Data
-
 
 load("data/Data_RNAseq_RUN1andRUN2_15Feb2023.RData") #bulk
 load('data/clinical_data_HC_CNS_IF_PTB_TBM.RData') #groundtruth
@@ -204,8 +213,9 @@ sc.dat.filtered <- cleanup.genes(input=sc.dat,
                                 exp.cells=5)
 gc()
 sc.dat.filtered.pc <-  select.gene.type(sc.dat.filtered, gene.type = "protein_coding")
+
 gc()
-diff.exp.stat <- get.exp.stat(sc.dat=sc.dat[,colSums(sc.dat>0)>5],
+diff.exp.stat <- get.exp.stat(sc.dat=sc.dat[,colSums(sc.dat>0)>3],
                               cell.type.labels=celltypes,
                               cell.state.labels=celltypes,
                               cell.count.cutoff=50,
@@ -244,7 +254,8 @@ sc.dat.filtered.pc.sig <- select.marker(sc.dat=sc.dat.filtered.pc,
 pathway_genes <- unique(c(IFN_gamma$geneSymbol,TCR_signaling))
 pathway_genes <- Reduce(intersect,list(pathway_genes,colnames(sc.dat))) #intersect pathways w/ sc.dat
 
-sc.dat.filtered.pc.sig$CD274 <- sc.dat.filtered.pc$CD274
+#sc.dat.filtered.pc.sig$CD274 <- sc.dat.filtered.pc$CD274
+sc.dat.filtered.pc.sig$CD274 <- sc.dat_274$CD274
 sc.dat.filtered.pc.sig[,pathway_genes] <- sc.dat[,pathway_genes]
 
 dim(sc.dat.filtered.pc.sig)
@@ -258,8 +269,8 @@ InstaPrism.res.initial = InstaPrism(input_type = 'refPhi_cs',
                                     bulk_Expr = t(bk.dat),
                                     refPhi = refPhi_obj,
                                     n.iter=100,
-                                    outlier.cut=0.01,
-                                    outlier.fraction=0.1,
+                                    #outlier.cut=0.01,
+                                    #outlier.fraction=0.1,
                                     convergence.plot=F, verbose = T
                                     )
 
@@ -273,20 +284,23 @@ bp.res <- updated_obj
 ptb.theta <- as.data.frame(t(bp.res@theta))
 ptb.z <- get_Z_array(bp.res, resolution = 'ct')
 dim(ptb.z)
-#tbm.theta <- ptb.theta
-#tbm.z <- ptb.z
-#save(tbm.theta,tbm.z,file=paste0(path_output,"/deconvolution/bp.res_tbm2_PBMC_01_01.RData"))
 
-#save(ptb.theta, ptb.z, file = "results/bp.res_healthy_PBMC_01_01.RData")
+
+ptb.z[,'CD274',]
+
+# healthy.theta <- ptb.theta
+# healthy.z <- ptb.z
+# save(healthy.theta,healthy.z,file=paste0(path_output,"/deconvolution/bp.res_healthy2_PBMC_01_01.RData"))
+
 
 # save(InstaPrism.res.initial,file = 'bp.res.init.RData')
 # save(updated_obj,file = 'bp.res.updated.RData')
-for (i in a) {
-  if(i %notin% b) {
-    print(i)
-  }
-}
-"S100A9"#???? (solved)
+```
+
+```{r}
+load(paste0(path_output,"/deconvolution/bp.res_healthy_PBMC_01_01.RData"))
+load(paste0(path_output,"/deconvolution/bp.res_tbm_PBMC_01_01.RData"))
+ptb.theta<-tbm.theta
 ```
 
 ```{r}
@@ -307,7 +321,8 @@ venn(x,ilabels = "counts",zcolor = "red, white, white")
 
 ```{r}
 #theta <- as.data.frame(t(InstaPrism.res.initial@Post.ini.ct@theta)) #initial
-theta <- as.data.frame(t(bp.res@theta))
+theta <- as.data.frame(ptb.theta)
+#theta <- as.data.frame(t(bp.res@theta))
 theta <- theta[ order(row.names(theta)),]
 
 theta$Neutrophil <- theta$Neutro
