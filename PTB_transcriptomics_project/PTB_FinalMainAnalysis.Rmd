@@ -61,8 +61,10 @@ library(ggpubr)
 library(cowplot)
 library(ggplot2)
 library(Metrics)
+
 path_input <- paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/")
+
 path_output<-paste0(str_replace_all(Sys.getenv("USERPROFILE"), '\\\\', '/'),
                      "/OneDrive - Oxford University Clinical Research Unit/#OUCRU-TB/#oucru-tb/PTB_project/FinalResults")
 ```
@@ -128,10 +130,11 @@ impute_df$Mixture <- NULL
 load(paste0(path_output,"/deconvolution/bp.res_ptb2_PBMC_01_01.RData"))
 load(paste0(path_output,"/deconvolution/bp.res_healthy2_PBMC_01_01.RData"))
 load(paste0(path_output,"/deconvolution/bp.res_tbm2_PBMC_01_01.RData"))
+
 gt <- data.frame(LIMS_ID = clinical_data_HC_CNS_IF_PTB_TBM$LIMS_ID,
-           Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
-           Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
-           Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE)
+                 Neutrophil = clinical_data_HC_CNS_IF_PTB_TBM$NEUTLE,
+                 Lymphocyte = clinical_data_HC_CNS_IF_PTB_TBM$LYMLE,
+                 Monocyte =  clinical_data_HC_CNS_IF_PTB_TBM$MONOLE)
 
 gt <- na.omit(gt)
 rownames(gt) <- gt$LIMS_ID
@@ -755,7 +758,6 @@ tbm26.theta <- l[[3]]
 tbm27.theta <- l[[4]]
 
 
-
 ptb_high_id <-  (vst_data[,c('LIMS_ID','GenXpert')] %>% filter(GenXpert=='MTB Detected High'))$LIMS_ID
 ptb_medium_id <-  (vst_data[,c('LIMS_ID','GenXpert')] %>% filter(GenXpert=='MTB Detected Medium'))$LIMS_ID
 ptb_low_id <-  (vst_data[,c('LIMS_ID','GenXpert')] %>% filter(GenXpert %in% c('MTB Detected Low',
@@ -815,7 +817,7 @@ ptb_high.z <- ptb.z[ptb_high_id,,]
 #theta <- as.data.frame(tbm26.theta)
 #theta <- as.data.frame(tbm27.theta)
 
-theta <- as.data.frame(healthy.theta)
+theta <- as.data.frame(tbm.theta)
 theta <- theta[ order(row.names(theta)),]
 
 theta$Neutrophil <- theta$Neutro
@@ -897,10 +899,292 @@ p
 
 #### Heatmap TCR signaling pathways
 
+Correct for batch effect (later)
+
+Healthy vs PTB low vs PTB medium vs PTB high
+
 ```{r}
-library(dcanr)
+
+draw_heatmap <- function(celltype, pathway, group,cluster_rows = FALSE, cluster_columns = FALSE) {
+  hm <- NULL
+  col = rev(brewer.pal(11, "Spectral"))
+  col_fun = colorRamp2(c(-2.1,-1.8,-1.5,-1,-0.5,0,0.5,1,1.5,1.8,2.1), col)
+  
+  # median scale
+  all.z_vst <- assay(vsd)
+  
+  #########
+  all.z_vst0 <- all.z_vst[, grepl( cell , colnames(all.z_vst))]
+  m = apply(all.z_vst0[,grepl('Healthy', colnames(all.z_vst0))], 1, median, na.rm=TRUE)#get median each gene in healthy
+  all.z_vst0 = all.z_vst0-m
+  #########
+  
+  all.z_vst <- all.z_vst[intersect(rownames(all.z_vst),
+                       if(pathway == 'IFN') IFN_gamma$geneSymbol
+                       else TCR_signaling), 
+                 grepl( cell , colnames(all.z_vst))]
+  m = apply(all.z_vst[,grepl('Healthy', colnames(all.z_vst))], 1, median, na.rm=TRUE)#get median each gene in healthy
+  all.z_vst_scaled = all.z_vst-m
+  
+  for(i in group) {
+    hm1 <- Heatmap(all.z_vst_scaled[,grepl(i, colnames(all.z_vst))],
+                   name = 'expression',
+                   col=col_fun,
+                   cluster_rows = cluster_rows,
+                   cluster_columns = cluster_columns,
+                   show_row_names = FALSE,
+                   show_column_names = FALSE,
+                   use_raster = FALSE,
+                   column_title = i,
+                   column_title_side = "bottom")
+    if(is.null(hm)) {hm <- hm1} else {hm<-hm+hm1}
+  }
+  ht <- draw(hm, column_title = paste0(pathway,' pathway in ',celltype), column_title_gp = gpar(fontsize = 16))
+  
+  
+
+  return(all.z_vst0)
+}
+
+# (genes, healhy + ptn, celltypes): (324 4838   17)
+common <- Reduce(intersect, list(colnames(healthy.z[,,1]),
+                                 colnames(ptb.z[,,1]),
+                                 colnames(tbm.z[,,1])))
+
+g <- c('Healthy','PTB_low','PTB_med','PTB_high')
+gn <- c(dim(healthy.z)[1],dim(ptb_low.z)[1],dim(ptb_medium.z)[1],dim(ptb_high.z)[1])
+all.z0 <- abind(healthy.z[,common,], ptb_low.z[,common,],ptb_medium.z[,common,], ptb_high.z[,common,],along = 1)
+
+# g <- c('Healthy','PTB_low','PTB_med','PTB_high','TBM27','TBM26')
+# gn <- c(dim(healthy.z)[1],dim(ptb_low.z)[1],dim(ptb_medium.z)[1],dim(ptb_high.z)[1],dim(tbm27.z)[1],dim(tbm26.z)[1])
+# all.z0 <- abind(healthy.z[,common,], ptb_low.z[,common,],ptb_medium.z[,common,], ptb_high.z[,common,],tbm27.z[,common,], tbm26.z[,common,],along = 1)
+
+rownames(all.z0) <- paste0(rownames(all.z0),"_",rep(g,times=gn))
+dim(all.z0)
+
+# merge 17 celltypes -> 3 celltypes: (4838  972(324*3))
+Neutrophil <- c('Neutro')
+Monocyte <- c('CD14 Mono','CD16 Mono')
+Lymphocyte <- c('B naive', 'B memory', 'CD8 Naive', 'CD8 TM', 'MAIT', 'NK', 'CD4 TM', 'CD4 Naive','CD4 CTL','OtherT' ,'Treg')
+
+a <- all.z0[,,Neutrophil]
+row.names(a) <- paste0(rownames(a), "_Neutrophil")
+b <- rowSums(all.z0[,,Monocyte], dims = 2)
+row.names(b) <- paste0(rownames(b), "_Monocyte")
+c <- rowSums(all.z0[,,Lymphocyte], dims = 2)
+row.names(c) <- paste0(rownames(c), "_Lymphocyte")
+all.z <-rbind(a,b,c)
+all.z <- round(t(all.z))
+dim(all.z)
+
+# vst transform
+group = rep(g,times=gn)
+group = as.factor(rep(group,times=3))
+celltype = as.factor(rep(c('Neutrophil','Monocyte','Lymnphocyte'),each=sum(gn)))
+coldata = data.frame(group,celltype)
+rownames(coldata) <- colnames(all.z)
+
+set.seed(42)
+dds <- DESeqDataSetFromMatrix(countData = all.z,
+                              colData = coldata,
+                              design = ~ celltype + group)
+
+vsd <- vst(dds, blind=FALSE)
+####################################################################################################
+library(qusage)
+
+cell <- 'Neutrophil'
+pathway <- 'IFN'
+
+all.z_vst_scaled <- draw_heatmap(celltype = cell,pathway =  pathway, group=g[1:4], cluster_rows = TRUE, cluster_columns = TRUE)
+dim(all.z_vst_scaled)
+#qusage
+eset <- all.z_vst_scaled[, grepl('Healthy', colnames(all.z_vst_scaled))|grepl('PTB_low', colnames(all.z_vst_scaled))]
+dim(eset)
+geneset <- intersect(rownames(all.z_vst),
+                       if(pathway == 'IFN') IFN_gamma$geneSymbol
+                       else TCR_signaling)
+
+
+labels <- rep(c('t0','t1'),times=c(30,87))
+contrast <- 't1-t0'
+genesets <- list(IFN_gamma$geneSymbol,TCR_signaling)
+qs.results = qusage(eset, labels, contrast, genesets)
+pdf.pVal(qs.results)
+```
+
+```{r}
+library(limma)
+
+common <- Reduce(intersect, list(colnames(healthy.z[,,1]),
+                                 colnames(ptb.z[,,1]),
+                                 colnames(tbm.z[,,1])))
+
+#all.z <- abind(healthy.z[,common,], ptb.z[,common,], tbm27.z[,common,], tbm26.z[,common,],along = 1)
+all.z <- abind(healthy.z[,common,], ptb_low.z[,common,],ptb_medium.z[,common,], ptb_high.z[,common,], tbm27.z[,common,], tbm26.z[,common,],along = 1)
+
+Neutrophil <- c('Neutro')
+Monocyte <- c('CD14 Mono','CD16 Mono')
+Lymphocyte <- c('B naive', 'B memory', 'CD8 Naive', 'CD8 TM', 'MAIT', 'NK', 'CD4 TM', 'CD4 Naive','CD4 CTL','OtherT' ,'Treg')
+
+a <- all.z[,,Neutrophil]
+row.names(a) <- paste0(rownames(a), "_Neutrophil")
+b <- rowSums(all.z[,,Monocyte], dims = 2)
+row.names(b) <- paste0(rownames(b), "_Monocyte")
+c <- rowSums(all.z[,,Lymphocyte], dims = 2)
+row.names(c) <- paste0(rownames(c), "_Lymphocyte")
+all.z <-rbind(a,b,c)
+all.z <- round(t(all.z))
+dim(all.z)#raw count 4838 x (group*celltypes)
+
+
+group = rep(c('Healthy','PTB_low','PTB_medium','PTB_high','TBM27','TBM26'),times=c(30,87,132,75,207,74))
+group = as.factor(rep(group,times=3))
+celltype = as.factor(rep(c('Neutrophil','Monocyte','Lymphocyte'),each=605))
+coldata = data.frame(group,celltype)
+rownames(coldata) <- colnames(all.z)
+
+
+dds <- DESeqDataSetFromMatrix(countData = all.z,
+                              colData = coldata,
+                              design = ~ group+celltype)
+
+dds$group <- relevel(dds$group, ref = "Healthy")
+design(dds) <- formula(~ group+celltype)
+
+plotPCA(all.z,intgroup=c("celltype"))
+
+
+
+
+
+
+
+
+
+design <- model.matrix(~ coldata$celltype + coldata$group)
+all.z_vst = removeBatchEffect(all.z, batch=coldata$group, design = design[,1:2])
+
+View(all.z_vst)
+
+
+
+
+
+
+y <- matrix(rnorm(10*9),10,9)
+y[,1:3] <- y[,1:3]+100
+batch <- c("A","A","A","B","B","B","C","C","C")
+y2 <- removeBatchEffect(y, batch)
+par(mfrow=c(1,2))
+boxplot(as.data.frame(y),main="Original")
+boxplot(as.data.frame(y2),main="Batch corrected")
+
+y2
+
+
+# Remove batch effects
+adjusted_data <- removeBatchEffect(expression_data, batch=batch, design=design[,1:2])
+
+
+
+
+
+
+vsd <- vst(dds, blind=FALSE)
+
+
+plotPCA(vsd,intgroup=c("group"))
+mat <- assay(vsd)
+mm <- model.matrix(~0+group, colData(vsd))
+mat <- limma::removeBatchEffect(mat, batch=vsd$group)
+vsd1 <- vsd
+assay(vsd1) <- mat
+plotPCA(vsd1,intgroup=c("group"))
+all.z_vst<- assay(vsd1)
+
+all.z_vst<- assay(vsd)
+
+
+mm <- model.matrix(~condition, colData(vsd))
+mat <- limma::removeBatchEffect(mat, batch=vsd$batch, design=mm)
+assay(vsd) <- mat
+plotPCA(vsd)
+```
+
+```{r}
+
+common <- Reduce(intersect, list(colnames(healthy.z[,,1]),
+                                 colnames(ptb.z[,,1]),
+                                 colnames(tbm.z[,,1])))
+
+#all.z <- abind(healthy.z[,common,], ptb.z[,common,], tbm27.z[,common,], tbm26.z[,common,],along = 1)
+all.z <- abind(healthy.z[,common,], ptb_low.z[,common,],ptb_medium.z[,common,], ptb_high.z[,common,], tbm27.z[,common,], tbm26.z[,common,],along = 1)
+
+Neutrophil <- c('Neutro')
+Monocyte <- c('CD14 Mono','CD16 Mono')
+Lymphocyte <- c('B naive', 'B memory', 'CD8 Naive', 'CD8 TM', 'MAIT', 'NK', 'CD4 TM', 'CD4 Naive','CD4 CTL','OtherT' ,'Treg')
+
+#lymphocytes group
+B <- c('B naive', 'B memory')
+NK <- c('NK')
+CD4 <- c('CD4 TM','CD4 Naive','CD4 CTL')
+CD8 <- c('CD8 TM')
+
+neutro_count <- round(t(all.z[,,Neutrophil]))
+mono_count <- round(t(rowSums(all.z[,,Monocyte], dims = 2)))
+lympho_count <- round(t(rowSums(all.z[,,Lymphocyte], dims = 2)))
+
+nk_count <- round(t(all.z[,,NK]))
+b_count <- round(t(rowSums(all.z[,,B], dims = 2)))
+cd4_count <- round(t(rowSums(all.z[,,CD4], dims = 2)))
+cd8_count <- round(t(all.z[,,CD8]))
+
+#save(neutro_count,mono_count,lympho_count,file='bp_zNML.RData')
+all.z1 <-cbind(neutro_count,mono_count,lympho_count)
+
+group = rep(c('Healthy','PTB_low','PTB_medium','PTB_high','TBM27','TBM26'),times=c(30,87,132,75,207,74))
+#group = as.factor(rep(group,times=1))
+celltype = as.factor(rep(c('Neutrophil','Monocyte','Lymnphocyte'),each=3))
+coldata = data.frame(group,celltype)
+rownames(coldata) <- colnames(all.z1)
+
+dds <- DESeqDataSetFromMatrix(countData = neutro_count,
+                              colData = coldata,
+                              design = ~ group)
+
+dds$group <- relevel(dds$group, ref = "Healthy")
+design(dds) <- formula(~ group)
+vsd <- vst(dds, blind=FALSE)
+all.z_vst <- assay(vsd)
+dim(all.z_vst)
+
+geneset <- intersect(rownames(all.z_vst),TCR_signaling)#IFN_gamma$geneSymbol
+
+a = all.z_vst[geneset,]
+m = apply(a[,1:30], 1, median, na.rm=TRUE)
+a = a-m
+dim(a)
+```
+
+```{r}
+#experiment
+library(ReactomeContentService4R) # Extract data from the three pathways
+library(abind)
+library(comprehenr)
+library(RColorBrewer)
+
+IFN_alpha_beta<-event2Ids(event.id = "R-HSA-909733.9")
+IFN_gamma<-event2Ids(event.id = "R-HSA-877300.7")
+PD_L1<-get_genelist_pathway_kegg(hsa_ID = "hsa05235") 
+TCR_signaling<-get_genelist_pathway_kegg(hsa_ID = "hsa04660")
+
+common <- Reduce(intersect, list(colnames(healthy.z[,,1]),
+                                 colnames(ptb.z[,,1]),
+                                 colnames(tbm.z[,,1])))
 
 all.z <- abind(healthy.z[,common,], ptb.z[,common,], tbm27.z[,common,], tbm26.z[,common,],along = 1)
+all.z <- abind(healthy.z[,common,], ptb_low.z[,common,],ptb_medium.z[,common,], ptb_high.z[,common,], tbm27.z[,common,], tbm26.z[,common,],along = 1)
 
 Neutrophil <- c('Neutro')
 Monocyte <- c('CD14 Mono','CD16 Mono')
@@ -917,25 +1201,49 @@ all.z <- round(t(all.z))
 dim(all.z)
 
 
-group = rep(c('Healthy','PTB','TBM27','TBM26'),times=c(30,296,207,74))
-group = as.factor(rep(group,each=3))
-celltype = as.factor(rep(c('Neutrophil','Monocyte','Lymphocyte'),each=607))
+
+
+
+#############################
+# group = rep(c('Healthy','PTB','TBM27','TBM26'),times=c(30,296,207,74))
+# group = as.factor(rep(group,times=3))
+# celltype = as.factor(rep(c('Neutrophil','Monocyte','Lymphocyte'),each=607))
+# coldata = data.frame(group,celltype)
+# rownames(coldata) <- colnames(all.z)
+# dds <- DESeqDataSetFromMatrix(countData = all.z,
+#                               colData = coldata,
+#                               design = ~ group + celltype)
+# 
+# dds$group <- relevel(dds$group, ref = "Healthy")
+# design(dds) <- formula(~ celltype + group)
+# 
+# all.z_vst <- assay(vst(dds, blind=FALSE))
+# dim(all.z_vst)
+
+#######################
+#vst all pops all celltypes
+
+group = rep(c('Healthy','PTB_low','PTB_medium','PTB_high','TBM27','TBM26'),times=c(30,87,132,75,207,74))
+group = as.factor(rep(group,times=3))
+celltype = as.factor(rep(c('Neutrophil','Monocyte','Lymphocyte'),each=605))
 coldata = data.frame(group,celltype)
+rownames(coldata) <- colnames(all.z)
 
 dds <- DESeqDataSetFromMatrix(countData = all.z,
                               colData = coldata,
-                              design = ~ celltype+group)
+                              design = ~ group+celltype)
 
 dds$group <- relevel(dds$group, ref = "Healthy")
-dds$celltype <- relevel(dds$celltype, ref = "Neutrophil")
-design(dds) <- formula(~ celltype + group)
+design(dds) <- formula(~ group+celltype)
+vsd <- vst(dds, blind=FALSE)
+all.z_vst <- assay(vsd)
+dim(all.z_vst)
 
-all.z_vst <- assay(vst(dds, blind=FALSE))
-dim(all.z_vst)
+
 #######################
-#vst all pops all celltypes
-all.z_vst <- vst(all.z,blind=FALSE)
-dim(all.z_vst)
+# all.z_vst <- vst(all.z,blind=FALSE)
+# dim(all.z_vst)
+
 #######################
 #vst each pop all celltypes
 # tmp = all.z
@@ -966,24 +1274,25 @@ dim(all.z_vst)
 cell <- 'Neutrophil'
 cell <- 'Monocyte'
 cell <- 'Lymphocyte'
-geneset <- intersect(rownames(all.z_vst_scale),TCR_signaling)#IFN_gamma$geneSymbol
+
+geneset <- intersect(rownames(all.z_vst),TCR_signaling)#IFN_gamma$geneSymbol
 sample_col <- to_vec(for(i in colnames(all.z_vst)) if(strsplit(i,"_",fixed=T)[[1]][2]==cell) i )
 
 a = all.z_vst[geneset,sample_col]
 m = apply(a[,1:30], 1, median, na.rm=TRUE)
 a = a-m
-#a = all.z_vst[intersect(rownames(all.z_vst_scale),geneset),]
 dim(a)
 
+##
 ## vst after
 # cell <- 'Neutrophil'
-# sample_col <- to_vec(for(i in colnames(all.z_vst)) if(strsplit(i,"_",fixed=T)[[1]][2]==cell) i )
+# sample_col <- to_vec(for(i in colnames(all.z)) if(strsplit(i,"_",fixed=T)[[1]][2]==cell) i )
 # a <- all.z[,sample_col]
 # a <- vst(a,blind=FALSE)
 # geneset <- TCR_signaling #IFN_gamma$geneSymbol
 # a = a[intersect(rownames(a),geneset),]
-# a = t(scale(t(a)))
-# a = a[complete.cases(a), ]
+# m = apply(a[,1:30], 1, median, na.rm=TRUE)
+# a = a-m
 # dim(a)
 ##
 
@@ -992,54 +1301,68 @@ dim(a)
 
 col = rev(brewer.pal(11, "Spectral"))
 #col_fun = colorRamp2(c(-2.2,-1.7,-1.5,-1,-0.5,0,0.5,1,1.5,1.7,2.2), col)
-col_fun = colorRamp2(c(-2.2,-1.7,-1.5,-1,-0.5,0,0.5,1,1.5,1.7,2.2), col)
+col_fun = colorRamp2(c(-2.1,-1.8,-1.5,-1,-0.5,0,0.5,1,1.5,1.8,2.1), col)
 
-col_fun = colorRamp2(c(-4,-1.2,-0.9,-0.6,-0.3,0,0.3,0.6,0.9,1.2,4), col)
-col_fun = colorRamp2(c(-2.2,-1.6,-0.8,-0.4,-0.2,0,0.2,0.4,0.8,1.6,2), col)
+#col_fun = colorRamp2(c(-4,-1.2,-0.9,-0.6,-0.3,0,0.3,0.6,0.9,1.2,4), col)
+#col_fun = colorRamp2(c(-2.2,-1.6,-0.8,-0.4,-0.2,0,0.2,0.4,0.8,1.6,2), col)
+
 #col_fun = colorRamp2(c(-5,-4,-3,-2,-1,0,1,2,3,4,5), col)
 #col = rev(brewer.pal(5, "Spectral"))
 
 #col_fun = colorRamp2(c(-2,-1,0,1,2), col)
+# Heatmap(a[,1:324],
+#         name = 'expression',
+#         col=col_fun,
+#         cluster_rows = TRUE,
+#         cluster_columns = FALSE,
+#         show_row_names = FALSE,
+#         show_column_names = FALSE,use_raster = FALSE,
+#         column_title = "Control",
+#     column_title_side = "bottom")
 
-# hm1 <- Heatmap(a[,1:30],
-#         name = 'expression',
-#         col=col_fun,
-#         cluster_rows = TRUE,
-#         cluster_columns = TRUE,
-#         show_row_names = FALSE,
-#         show_column_names = FALSE,use_raster = FALSE,       
-#         column_title = "Control", 
-#     column_title_side = "bottom")
+
+hm1 <- Heatmap(a[,1:30],
+        name = 'expression',
+        #col=col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,use_raster = FALSE,
+        column_title = "Control",
+    column_title_side = "bottom")
 # 
-# hm2 <- Heatmap(a[,31:(31+87-1)],
-#         name = 'expression',
-#         col=col_fun,
-#         cluster_rows = TRUE,
-#         cluster_columns = TRUE,
-#         show_row_names = FALSE,
-#         show_column_names = FALSE,use_raster = FALSE,       
-#         column_title = "PTB Low", 
-#     column_title_side = "bottom")
-# hm3 <- Heatmap(a[,118:(118+132-1)],
-#         name = 'expression',
-#         col=col_fun,
-#         cluster_rows = TRUE,
-#         cluster_columns = TRUE,
-#         show_row_names = FALSE,
-#         show_column_names = FALSE,use_raster = FALSE,       
-#         column_title = "PTB Medium", 
-#     column_title_side = "bottom")
+hm2 <- Heatmap(a[,31:(31+87-1)],
+        name = 'expression',
+        #col=col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,use_raster = FALSE,
+        column_title = "PTB Low",
+    column_title_side = "bottom")
+
+hm3 <- Heatmap(a[,118:(118+132-1)],
+        name = 'expression',
+        #col=col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,use_raster = FALSE,
+        column_title = "PTB Medium",
+    column_title_side = "bottom")
 # 
-# hm4 <- Heatmap(a[,250:(250+75-1)],
-#         name = 'expression',
-#         col=col_fun,
-#         cluster_rows = TRUE,
-#         cluster_columns = TRUE,
-#         show_row_names = FALSE,
-#         show_column_names = FALSE,use_raster = FALSE,       
-#         column_title = "PTB High", 
-#     column_title_side = "bottom")
-# 
+hm4 <- Heatmap(a[,250:(250+75-1)],
+        name = 'expression',
+        #col=col_fun,
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        show_row_names = FALSE,
+        show_column_names = FALSE,use_raster = FALSE,
+        column_title = "PTB High",
+    column_title_side = "bottom")
+
+hm = hm1+hm2+hm3+hm4
+draw(hm, column_title = cell, column_title_gp = gpar(fontsize = 16))
 # hm5 <- Heatmap(a[,325:(325+207-1)],
 #         name = 'expression',
 #         col=col_fun,
